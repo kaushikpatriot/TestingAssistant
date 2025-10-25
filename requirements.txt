@@ -1,0 +1,6 @@
+xlsxwriter
+pandas
+pydantic
+google-genai
+dotenv
+openpyxl
