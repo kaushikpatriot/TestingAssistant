@@ -1,1 +1,5 @@
 testenv
+Cache
+.env
+KnowledgeBase/*
+Datamodels/*
