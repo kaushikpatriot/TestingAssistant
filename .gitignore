@@ -3,3 +3,5 @@ Cache
 .env
 KnowledgeBase/*
 Datamodels/*
+__pycache__
+Output/*
