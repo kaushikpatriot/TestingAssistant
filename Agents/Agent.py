@@ -3,7 +3,8 @@ import json
 from pydantic import BaseModel
 from abc import ABC, abstractmethod
 from typing import Type
-from Helpers.KnowledgeBaseProvider import getKnowledgeBasePath
+import pandas as pd
+import os
 
 
 class LLMClient:
@@ -61,10 +62,6 @@ class PipelineStepAgent(ABC):
     def verify_content(self):
         pass
 
-    @abstractmethod
-    def save_output(self):
-        pass    
-    
     @abstractmethod
     def execute(self):
         pass

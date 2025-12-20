@@ -6,13 +6,17 @@ class ExcelManager:
     def __init__(self, mode='new', filepath=None):
         if mode == 'new':
             self.wb = Workbook()
+            self.filepath = filepath
         else:
             if filepath:
                 self.wb = load_workbook(filepath)
                 self.sheetnames = self.wb.sheetnames
             else:
                 raise Exception("Filepath required to load an existing workbook")
-            
+    
+    def createWorksheet(self, sheetName):
+        self.wb.create_sheet(sheetName)
+
     def writeDfToSheet(self, sheetName, dfToWrite, startRow, startMarker, endMarker):
         ws = self.wb[sheetName]
         curr_row = startRow
@@ -31,7 +35,14 @@ class ExcelManager:
         # Write data rows
         for row_data in dfToWrite.itertuples(index=False):
             for c_idx, value in enumerate(row_data, start=1):
-                cell = ws.cell(curr_row, c_idx, value)
+                #To ensure right formatting is applied when writing to Excel
+                if isinstance(value, list):
+                    cell_value = str(value)
+                elif value in ['True', 'False']:
+                    cell_value = True if value == 'True' else False
+                else:
+                    cell_value = value
+                cell = ws.cell(curr_row, c_idx, cell_value)
             curr_row += 1
         
         # Write end marker
@@ -78,17 +89,25 @@ class ExcelManager:
         num_rows_to_delete = end_row - start_row + 1
         ws.delete_rows(start_row, num_rows_to_delete)
 
-    def save_wb(self, filepath):
-        self.wb.save(filepath)
+    def save_wb(self):
+        #Delete an empty Sheet named "Sheet" if one exists
+        try:
+            self.wb.remove("Sheet")
+        except:
+            pass
+
+        self.wb.save(self.filepath)
     
 class CsvManager:
-    def writeDfToCsv(self, df:pd.DataFrame, filepath:str):
+    @staticmethod
+    def writeDfToCsv(df:pd.DataFrame, filepath:str):
         try:
             df.to_csv(filepath, index=False)
         except Exception as e:
             print(f'Unable to write to a csv: {e}')
 
-    def readCsvToDf(self, filepath):
+    @staticmethod
+    def readCsvToDf(filepath):
         try:
             df = pd.read_csv(filepath)
             return df

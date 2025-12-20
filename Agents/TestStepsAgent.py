@@ -3,6 +3,7 @@ from Helpers.KnowledgeBaseProvider import getKnowledgeBasePath
 from pydantic import BaseModel, Field
 import pandas as pd
 import os
+from Helpers.OutputManager import ExcelManager
 
 class AllocationDetails(BaseModel):
   step: int = Field(description="This is the same step number as the test case step in which allocation data is generated")
@@ -13,12 +14,12 @@ class AllocationDetails(BaseModel):
   tmCode: str = Field(description="This is the trading member code")
   cpCode: str = Field(description="This is the custodial participant code")
   cliCode: str = Field(description="This is the client code")
-  txn_type: str = Field(description = "This can 4 possible values. Allocate, De-allocate and Transfer In and Transfer Out")
+  txn_type: str = Field(description = "This can have only 4 possible values. Allocate, De-allocate and Transfer In and Transfer Out")
   amt: float = Field(description="This is the amount of the transaction. Allocation and Transfer In are a positive amounts, De-allocation and Transfer Out will be negative.")
   cum_amt: float = Field(description="This is the cumulative allocation outstanding after the transaction is performed. This will take into account the allocation transactions in the previous steps too ")
   trfToSeg: str = Field(description="This the segment to which allocation will be transfered")
-  pass_fail: str = Field(description = "This indicates if the given allocation passes or fails")
-  reason: str = Field(description = "If the allocation fails, give a short reason for failure in less than 20 words")
+  pass_fail: str = Field(description = "This indicates if the given allocation step passes or fails")
+  reason: str = Field(description = "If the allocation step fails, give a short reason for failure in less than 20 words")
   
 
 class TestCaseStep(BaseModel):
@@ -62,8 +63,8 @@ class TestCaseStep(BaseModel):
                                   E.g CM, FNO etc **THIS DOES NOT APPLY TO TRANSFER OF ALLOCATION''')  
   allocation: list[AllocationDetails] = Field(description='''Applies only when the event is Allocation. Empty for all other events. This event will hold Allocation, De-allocation and Transfer events. 
                                               The allocation process has to consider every line of this data and use it to allocate Cash where applicable as per the rules given''')
-  pass_fail: str = Field(description = "This indicates if the overall allocation passes or fails")
-  reason: str = Field(description = "If the allocation fails, give a short reason for failure in less than 20 words")
+  pass_fail: str = Field(description = "This indicates if the overall transaction step passes or fails")
+  reason: str = Field(description = "If the transaction step fails, give a short reason for failure in less than 20 words")
 
 
 class TestCaseSteps(BaseModel):
@@ -107,6 +108,7 @@ class TestStepAgent(PipelineStepAgent):
         self.generate_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
         self.verify_model_config.test_module = test_module
         self.verify_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
+        self.excel_handler = ExcelManager(mode = 'new', filepath = os.getenv('TEST_DATA_FILE'))
 
     def load_input_data(self):
         self.input_df = pd.read_csv(f"{os.getenv('TEST_CASES_FILE')}")
@@ -123,17 +125,12 @@ class TestStepAgent(PipelineStepAgent):
         llm_client = LLMClient(**self.verify_model_config.model_dump())
         return llm_client.generate_content(input = output)
     
-    def save_output(self, output:pd.DataFrame, test_case):
-        #df = pd.DataFrame(output)
-        output_file = f"{os.getenv('TEST_DATA_DIR')}/teststeps_{test_case}.csv" 
-        output.to_csv(output_file)    
-    
     def execute(self, verify = True, tries = 1):
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
 
         self.load_input_data()
-        for record_num in range(3):#len(self.input_df)):
+        for record_num in range(2):#len(self.input_df)):
             input_data = self.input_df.iloc[record_num]
             for i in range(tries):
                 generated_response = self.generate_content(input_data)
@@ -143,8 +140,15 @@ class TestStepAgent(PipelineStepAgent):
                     if verify_response['overall_score'] >= 70:
                         break
             output_df = pd.DataFrame(generated_response['output'])
-            # print(f'Input Data {input_data}')
-            # print(f'Output Data {output_df}')
-            # print(f'Final Data {final_df}')
-            self.save_output(output_df, input_data['test_case_id'])
-        #print(generated_response)
+            self.excel_handler.createWorksheet(sheetName=input_data['test_case_id'])
+            curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=output_df.drop(columns=["allocation"]),
+                                               startRow=1, startMarker="##Test Steps - Start", endMarker="##Test Steps - End")
+        
+            #Writing Sub steps in a separate set of rows. E.g. Allocation Steps
+            for col in output_df.columns:
+                if output_df[col].apply(lambda x: isinstance(x, list)).any():
+                    sub_df = pd.DataFrame(output_df[col].explode().to_list())
+                    curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=sub_df,
+                                               startRow=curr_row+1, startMarker=f"##{col} Steps - Start", endMarker=f"##{col} Steps - End")
+        
+        self.excel_handler.save_wb()

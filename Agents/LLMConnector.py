@@ -82,8 +82,9 @@ class LLMConnector:
             }
         ],
         'files': [{'type': 'collection', 'id': self.ollama_knowledge_id}],
-        'temperature': 0.7,
-        'max_tokens': 25000
+        'options': {
+            'num_predict': 8192
+            }
         }
         success = False
         for i in range(tries):

@@ -3,6 +3,7 @@ from Helpers.KnowledgeBaseProvider import getKnowledgeBasePath
 from pydantic import BaseModel, Field
 import pandas as pd
 import os
+from Helpers.OutputManager import CsvManager as csv
 
 class CollateralSteps(BaseModel):
    step: int = Field(description="This is the step number of the sequence of steps to be executed")
@@ -87,11 +88,6 @@ class TestCaseAgent(PipelineStepAgent):
         llm_client = LLMClient(**self.verify_model_config.model_dump())
         return llm_client.generate_content(input = output)
     
-    def save_output(self, output:pd.DataFrame):
-        #df = pd.DataFrame(output)
-        output_file = f"{os.getenv('TEST_CASES_FILE')}" 
-        output.to_csv(output_file)    
-    
     def execute(self, verify = True, tries = 1):
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
@@ -108,12 +104,8 @@ class TestCaseAgent(PipelineStepAgent):
                     if verify_response['overall_score'] >= 70:
                         break
             output_df = pd.DataFrame(generated_response['output'])
-            # print(f'Input Data {input_data}')
-            # print(f'Output Data {output_df}')
             if final_df.empty:
                 final_df = output_df
             else:
                 final_df = pd.concat([final_df, output_df], ignore_index = True)
-            # print(f'Final Data {final_df}')
-        self.save_output(final_df)
-        #print(generated_response)
+        csv.writeDfToCsv(final_df, os.getenv('TEST_CASES_FILE'))

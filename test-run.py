@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 # from Helpers.OutputManager import CsvManager, ExcelManager
 # import json
 # import pandas as pd
-from Agents.TestScenarioAgent import TestScenarioAgent
+from Agents.TestScenariosAgent import TestScenarioAgent
 from Agents.TestDimensionsAgent import TestDimensionAgent
 from Agents.TestCasesAgent import TestCaseAgent
 from Agents.TestStepsAgent import TestStepAgent
@@ -60,10 +60,10 @@ load_dotenv()
 # test_cs_agent = TestCaseAgent("Cash Allocation")
 # test_cs_agent.execute()
 
-# print(f'Generating Test Steps \n')
-# test_st_agent = TestStepAgent("Cash Allocation")
-# test_st_agent.execute()
+print(f'Generating Test Steps \n')
+test_st_agent = TestStepAgent("Cash Allocation")
+test_st_agent.execute()
 
-print(f'Generating Test Output \n')
-test_ot_agent = TestOutputAgent("Cash Allocation")
-test_ot_agent.execute()
+# print(f'Generating Test Output \n')
+# test_ot_agent = TestOutputAgent("Cash Allocation")
+# test_ot_agent.execute()

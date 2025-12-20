@@ -2,7 +2,9 @@ from Agents.Agent import PipelineStepAgent, ModelConfig, LLMClient
 from Helpers.KnowledgeBaseProvider import getKnowledgeBasePath
 from pydantic import BaseModel, Field
 import pandas as pd
+from Helpers.OutputManager import CsvManager as csv
 import os
+
 
 
 class TestDimension(BaseModel):
@@ -67,11 +69,6 @@ class TestDimensionAgent(PipelineStepAgent):
         llm_client = LLMClient(**self.verify_model_config.model_dump())
         return llm_client.generate_content(input = output)
     
-    def save_output(self, output):
-        df = pd.DataFrame(output)
-        output_file = f"{os.getenv('TEST_DIMENSIONS_FILE')}" 
-        df.to_csv(output_file)    
-    
     def execute(self, verify = True, tries = 1):
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
@@ -82,5 +79,5 @@ class TestDimensionAgent(PipelineStepAgent):
                 verify_response = self.verify_content(generated_response)
                 if verify_response['overall_score'] >= 70:
                     break
-        self.save_output(generated_response['output'])
+        csv.writeDfToCsv(pd.DataFrame(generated_response['output']), os.getenv('TEST_DIMENSIONS_FILE'))
         #print(generated_response)

@@ -363,6 +363,9 @@ class TestOutputAgent(PipelineStepAgent):
             self.load_knowledge_base()
 
         self.load_input_data()
+        
+        #Delete the range from Excel
+
         for record_num in range(len(self.input_df)):
             input_data = self.input_df.iloc[record_num]
             for i in range(tries):
@@ -373,8 +376,7 @@ class TestOutputAgent(PipelineStepAgent):
                     if verify_response['correctness'] == True:
                         break
             output_df = pd.DataFrame(generated_response['output'])
-            # print(f'Input Data {input_data}')
-            # print(f'Output Data {output_df}')
-            # print(f'Final Data {final_df}')
+        
+
+            #Save the Output in the given range
             self.save_output(output_df, input_data['step'])
-        #print(generated_response)
