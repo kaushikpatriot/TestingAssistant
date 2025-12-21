@@ -3,6 +3,8 @@ from Helpers.KnowledgeBaseProvider import getKnowledgeBasePath
 from pydantic import BaseModel, Field
 import pandas as pd
 import os
+from Helpers.OutputManager import ExcelManager
+import json
 
 class ExpectedResultLine(BaseModel):
     """
@@ -337,9 +339,14 @@ class TestOutputAgent(PipelineStepAgent):
         self.generate_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
         self.verify_model_config.test_module = test_module
         self.verify_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
+        self.excel_handler = ExcelManager(mode = 'modify', filepath = os.getenv('TEST_DATA_FILE'))
 
-    def load_input_data(self):
-        self.input_df = pd.read_csv(f"{os.getenv('TEST_DATA_DIR')}/teststeps_TC-0001.csv")
+
+    def load_input_data(self, sheetName):
+        test_step_end_row, steps_df = self.excel_handler.excelToDfConverter(sheetName, "##Test Steps - Start", "##Test Steps - End")
+        allocation_end_row, allocation_df = self.excel_handler.excelToDfConverter(sheetName, "##allocation - Start", "##allocation - End")
+        end_row = allocation_end_row if allocation_end_row else test_step_end_row
+        return end_row, steps_df, allocation_df
 
     def load_knowledge_base(self):
         llm_client = LLMClient(**self.generate_model_config.model_dump())
@@ -353,30 +360,50 @@ class TestOutputAgent(PipelineStepAgent):
         llm_client = LLMClient(**self.verify_model_config.model_dump())
         return llm_client.generate_content(input = output)
     
-    def save_output(self, output:pd.DataFrame, test_case):
-        #df = pd.DataFrame(output)
-        output_file = f"{os.getenv('TEST_DATA_DIR')}/teststeps_{test_case}.csv" 
-        output.to_csv(output_file)    
-    
-    def execute(self, verify = True, tries = 1):
+    def execute(self, sheets, verify = True, tries = 1, startMarker = '##Expected Output - Start', endMarker = '##Expected Output - End'):
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
 
-        self.load_input_data()
+        #For each sheet
+        for sheetName in self.excel_handler.sheetnames:
+            if (sheets is None) or (sheets is not None and sheetName in sheets):
+                # Delete the range from Excel
+                self.excel_handler.deleteRange(sheetName, startMarker, endMarker)
+                # Convert to Dataframe
+                current_state = {}
+                output_df = pd.DataFrame()
+                end_row, steps_df, allocation_df = self.load_input_data(sheetName)
+                # Generate output given the current state and the transaction
+                step_count, current_state = len(steps_df), {}
+                for step in range(1, step_count+1):
+                    actual_step = steps_df[steps_df['step'] == step ]
+                    input_data = {'current_state': current_state, 'transaction_step': actual_step}
+                    if len(allocation_df) > 0:
+                        allocation_step = allocation_df[allocation_df['step'] == step]
+                        input_data['allocation_step']= allocation_step
+                    
+                    #Generate output
+                    print(f"\nExpected Output being generated for {sheetName}")
+                    for i in range(tries):
+                        generated_response = self.generate_content(input_data)
+                        input_data['expected_output'] = generated_response['output']
+                        if verify:
+                            verify_response = self.verify_content(input_data)
+                            if verify_response['correctness'] == True:
+                                break
+
+                    #State update for next iteration
+                    current_state = generated_response['output']
+                    if output_df.empty:
+                        output_df = pd.DataFrame(generated_response['output'])
+                    else:
+                        output_df = pd.concat([output_df, pd.DataFrame(generated_response['output'])], ignore_index=True)
+                    
+                # Write the output to the sheet
+                curr_row = self.excel_handler.writeDfToSheet(sheetName = sheetName, dfToWrite=output_df,
+                                    startRow=end_row+2, startMarker="##Expected Output - Start", endMarker="##Expected Output - End")
+
+            # Save the workbook
+            self.excel_handler.save_wb()
         
-        #Delete the range from Excel
 
-        for record_num in range(len(self.input_df)):
-            input_data = self.input_df.iloc[record_num]
-            for i in range(tries):
-                generated_response = self.generate_content(input_data)
-
-                if verify:
-                    verify_response = self.verify_content(generated_response)
-                    if verify_response['correctness'] == True:
-                        break
-            output_df = pd.DataFrame(generated_response['output'])
-        
-
-            #Save the Output in the given range
-            self.save_output(output_df, input_data['step'])

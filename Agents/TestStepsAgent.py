@@ -125,12 +125,12 @@ class TestStepAgent(PipelineStepAgent):
         llm_client = LLMClient(**self.verify_model_config.model_dump())
         return llm_client.generate_content(input = output)
     
-    def execute(self, verify = True, tries = 1):
+    def execute(self, start=1, end=-1, verify = True, tries = 1):
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
 
         self.load_input_data()
-        for record_num in range(2):#len(self.input_df)):
+        for record_num in range(start-1, (len(self.input_df) if end < 0 else end)):#len(self.input_df)):
             input_data = self.input_df.iloc[record_num]
             for i in range(tries):
                 generated_response = self.generate_content(input_data)
@@ -141,14 +141,18 @@ class TestStepAgent(PipelineStepAgent):
                         break
             output_df = pd.DataFrame(generated_response['output'])
             self.excel_handler.createWorksheet(sheetName=input_data['test_case_id'])
-            curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=output_df.drop(columns=["allocation"]),
+            #Identify columns that have lists as its value. They will be written out separately on Excel
+            list_cols = [
+                        c for c in output_df.columns
+                        if output_df[c].apply(lambda x: isinstance(x, list)).any()
+                   ]
+            curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=output_df.drop(columns=list_cols),
                                                startRow=1, startMarker="##Test Steps - Start", endMarker="##Test Steps - End")
         
             #Writing Sub steps in a separate set of rows. E.g. Allocation Steps
-            for col in output_df.columns:
-                if output_df[col].apply(lambda x: isinstance(x, list)).any():
-                    sub_df = pd.DataFrame(output_df[col].explode().to_list())
-                    curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=sub_df,
-                                               startRow=curr_row+1, startMarker=f"##{col} Steps - Start", endMarker=f"##{col} Steps - End")
+            for col in list_cols:
+                sub_df = pd.DataFrame(output_df[col].explode().to_list())
+                curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=sub_df,
+                                            startRow=curr_row+1, startMarker=f"##{col} Steps - Start", endMarker=f"##{col} Steps - End")
         
         self.excel_handler.save_wb()

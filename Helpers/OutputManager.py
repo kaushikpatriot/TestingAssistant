@@ -4,6 +4,7 @@ import pandas as pd
 
 class ExcelManager:
     def __init__(self, mode='new', filepath=None):
+        self.filepath = filepath
         if mode == 'new':
             self.wb = Workbook()
             self.filepath = filepath
@@ -63,7 +64,8 @@ class ExcelManager:
         return start_row, end_row
 
 
-    def excelToDfConverter(self, ws, startMarker, endMarker):
+    def excelToDfConverter(self, sheetName, startMarker, endMarker):
+        ws = self.wb[sheetName]
         #Find range
         start_row, end_row = self.rowsFinder(ws, startMarker, endMarker)
         
@@ -81,7 +83,8 @@ class ExcelManager:
             df = df.sort_values('step').reset_index(drop=True)
         return end_row, df
 
-    def deleteRange(self, ws, startMarker, endMarker):
+    def deleteRange(self, sheetName, startMarker, endMarker):
+        ws = self.wb[sheetName]
         start_row, end_row = self.rowsFinder(ws, startMarker, endMarker)
         
         if start_row is None or end_row is None:
