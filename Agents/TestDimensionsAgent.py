@@ -6,17 +6,30 @@ from Helpers.OutputManager import CsvManager as csv
 import os
 
 
+class DimensionValues(BaseModel):
+    dim_val_id: str = Field(description='''Unique Id for the value within the Dimension. Value Id should have the Dimension Id followed 
+                                by an id. For example Value for Dim Id TD-001 should be TD-001-001 , TD-001-002 and so on''')
+    dim_value: str = Field(description = '''The allowed value for the dimension. Use consistent naming pattern''')
+
+class TestConstraints(BaseModel):
+    const_id: str = Field(description='''Unique Id for the constraint. Use Dim id and add -C-001, -C-002 etc to it''')
+    constraint: str = Field(description='''The constraint to be applied when generating combinations using this dimension's values''')
 
 class TestDimension(BaseModel):
-    dimension_id: int = Field(description = 'Unique identifier for the dimension. Numbering to be of the format DIM001, DIM002 etc')
+    dim_id: str = Field(description = 'Unique identifier for the dimension. Numbering to be of the format TD-001, TD-002 etc')
     dimension: str = Field(description= 'The dimension name that was extracted from the requirements for which test cases have to be generated. Example: Allocation Level')
-    values: list[str] = Field(description = 'The exhaustive list of valid values for this dimension Example CM Level, TM Level, UCC Level, CP Level etc')
+    description: str = Field(description='Description of the dimension and what it means')
+    dim_type: str = Field(description='The type of dimension for testing purposes. Values can only be **Core**, **Independent**, **Ancillary**')
+    values: list[DimensionValues] = Field(description='The list of allowed values for this dimension')
+    constraints: list[TestConstraints] = Field(description='The list of constraints to be applied to this dimension when combining its values with other dimensions to generate scenarios')
+    note: str = Field(description = 'Any notes that will be useful for Test Combination generation process later')
 
 class TestDimensionList(BaseModel):
     output: list[TestDimension] = Field(description = 'List of valid dimension extracted from the requirements and their valid list of values')
 
 class TestDimensionVerification(BaseModel):
-    overall_score: int = Field(description = 'Provides a score out of 100 in terms of correctness of the test combos')
+    overall_score: int = Field(description = 'Provides a score out of 100 in terms of correctness of the test combinations')
+    rationale: str = Field(description = 'List the reasons for providing this score. What are the reasons that reduced the score')
 
 class TestDimensionAgent(PipelineStepAgent):
     generate_model_config = ModelConfig(
@@ -30,8 +43,8 @@ class TestDimensionAgent(PipelineStepAgent):
                                 3. List them in the format required
                                 ''' ,
                         output_format = TestDimensionList,
-                        provider = 'ollama',
-                        model = 'gpt-oss:20b'
+                        provider = 'gemini',
+                        model = 'gemini-2.5-flash'
                         )
     
     verify_model_config = ModelConfig(
@@ -43,8 +56,8 @@ class TestDimensionAgent(PipelineStepAgent):
                                 1. Verify the input given and provide a score of the correctness of the input.
                                 '''  ,
                         output_format = TestDimensionVerification,
-                        provider = 'ollama',
-                        model = 'deepseek-r1:14b'
+                        provider = 'gemini',
+                        model = 'gemini-2.5-flash'
                         )
 
     def __init__(self, test_module):

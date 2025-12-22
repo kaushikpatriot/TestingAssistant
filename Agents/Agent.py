@@ -16,7 +16,7 @@ class LLMClient:
         self.llm_connector = LLMConnector(self.params.get('test_module'))
 
     def upload_files(self):
-        self.llm_connector.upload_files(provider = self.params.get('provider'), folder_path = self.params.get('knowledge_base_path'))
+        self.llm_connector.upload_files(provider = self.params.get('provider'), folder_path = self.params.get('knowledge_base_path'), model = self.params.get('model'))
 
     def generate_content(self, input=''):
         prompt = f"Role: {self.params.get('role')}. Task: {self.params.get('task')}. **Input**: {input}"

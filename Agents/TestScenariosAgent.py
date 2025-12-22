@@ -39,14 +39,18 @@ class TestScenarioAgent(PipelineStepAgent):
                         role = '''You are an expert test designer for financial application. You understand the nuances of requirements provided''',
                         task = '''
                                 You required to carefully understand the requirements and the Test dimensions provided as **Input** and do the following
-                                1. Create an exhaustive list of combinations of dimensions from which test cases can be generated. **DO NOT** miss any valid combinations.
+                                1. Create an exhaustive list of dimensions from which test cases can be generated. **DO NOT** miss any valid combinations.
                                 2. Use only the dimensions and the respective values available in the **Input**. **DO NOT** use any other dimensions.
                                 3. Assign a criticality for the combinations for the purposes of test coverage.
-                                4. List them in the format required
+                                4. **Generate a maximum of 50 valid combinations at a time after taking into account any that has already been generated**
+                                5. **DO NOT GENERATE COMBINATIONS already generate**
+                                6. **DO NOT GENERATE MORE THAN 50 combinations at a time**
+                                7. Keep the scenario numbering continuous and sequential across batches
+                                8. List them in the format required
                                 ''' ,
                         output_format = TestComboList,
-                        provider = 'ollama',
-                        model = 'deepseek-r1:14b' #'qwen-coder:30b'#'gpt-oss:20b'
+                        provider = 'gemini',
+                        model = 'gemini-2.5-pro' #'qwen-coder:30b'#'gpt-oss:20b'
                         )
     
     verify_model_config = ModelConfig(
@@ -58,8 +62,8 @@ class TestScenarioAgent(PipelineStepAgent):
                                 1. Verify the input given and provide a score of the correctness of the input.
                                 '''  ,
                         output_format = TestComboVerification,
-                        provider = 'ollama',
-                        model = 'deepseek-r1:14b'
+                        provider = 'gemini',
+                        model = 'gemini-2.5-pro'
                         )
 
     def __init__(self, test_module):
@@ -69,7 +73,7 @@ class TestScenarioAgent(PipelineStepAgent):
         self.verify_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
 
     def load_input_data(self):
-        self.input_df = pd.read_csv(f"{os.getenv('TEST_DIMENSIONS_FILE')}")
+        self.input_df = pd.read_csv(f"{os.getenv('TEST_DIMENSIONS_FILE')}")         
 
     def load_knowledge_base(self):
         llm_client = LLMClient(**self.generate_model_config.model_dump())
@@ -83,18 +87,31 @@ class TestScenarioAgent(PipelineStepAgent):
         llm_client = LLMClient(**self.verify_model_config.model_dump())
         return llm_client.generate_content(input = output)
     
-    def execute(self, verify = True, tries = 1):
+    def execute(self, verify = False, tries = 1):
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
 
         self.load_input_data()
         
-        for i in range(tries):
-            generated_response = self.generate_content(self.input_df)
+        scenarios_df = pd.DataFrame()
+        iterations = 10
 
-            if verify:
-                verify_response = self.verify_content(generated_response)
-                if verify_response['overall_score'] >= 70:
-                    break
-        csv.writeDfToCsv(pd.DataFrame(generated_response['output']),os.getenv('TEST_SCENARIOS_FILE'))
+        for step_num in range(iterations):
+            input_data = {'Dimensions': self.input_df, 'Scenarios_generated_so_far': scenarios_df}
+            for i in range(tries):
+                generated_response = self.generate_content(input_data)
+                response_df = pd.DataFrame(generated_response['output'])
+                print(f'Number of Scenarios generated in step {step_num+1} is {len(response_df)}')
+                if verify:
+                    verify_response = self.verify_content(generated_response)
+                    if verify_response['overall_score'] >= 70:
+                        break
+            if scenarios_df.empty:
+                scenarios_df = response_df
+            else:
+                scenarios_df = pd.concat([scenarios_df, response_df], ignore_index=True)
+            if len(response_df) < 50: #Maximum of 50 combinations being generated at a time
+                break
+
+        csv.writeDfToCsv(scenarios_df,os.getenv('TEST_SCENARIOS_FILE'))
         #print(generated_response)

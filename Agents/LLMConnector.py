@@ -25,7 +25,7 @@ class LLMConnector:
             raise Exception(f"{provider} is an invalid provider. It can only be ollama or gemini")
         return response
 
-    def upload_files(self, provider, folder_path):
+    def upload_files(self, provider, folder_path, model):
 
         self.files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) 
                 if os.path.isfile(os.path.join(folder_path, f))]
@@ -34,7 +34,7 @@ class LLMConnector:
             results = self._upload_files_ollama(self.files)
             # print(results)
         elif provider == 'gemini':
-            self._upload_files_gemini(self.files)
+            self._upload_files_gemini(self.files, model)
         else:
             raise Exception(f"{provider} is an invalid provider. It can only be ollama or gemini")
 
@@ -194,6 +194,7 @@ class LLMConnector:
 
     def _chat_gemini(self, prompt, model = 'gemini-2.5-flash', response_schema = None):
         self._load_cache_gemini()
+
         response = self.gemini_client.models.generate_content(
             model=model,
             contents=[prompt],
@@ -207,35 +208,46 @@ class LLMConnector:
     
 
     def _upload_files_gemini(self, files, model = 'gemini-2.5-flash'):
-        for file_path in files:
-            print(f"Uploading file: {file_path}...")
-            # mime_type = 'application/text-plain'
+        try:
+            self._load_cache_gemini()
+            #Extending the cache time 
+            self.gemini_client.caches.update(
+                    name = self.cache.name,
+            config  = types.UpdateCachedContentConfig(
+                ttl='1800s'
+                    )
+                )
+        except:
+            print('Cache unavailable and hence uploading documents')
+            for file_path in files:
+                print(f"Uploading file: {file_path}...")
+                # mime_type = 'application/text-plain'
 
-            file_obj = self.gemini_client.files.upload(
-                file=file_path
+                file_obj = self.gemini_client.files.upload(
+                    file=file_path
+                )
+                self.uploaded_files.append(file_obj)
+                print(f"Uploaded: {file_obj.display_name} ({file_obj.name})")
+
+            cache_contents = [f for f in self.uploaded_files]
+            # 5. Define system instructions for the combined document analysis
+            SYSTEM_INSTRUCTION = "You are an expert tester who must analyze the provided documents and help generate test cases, test steps, test data and expected output"
+
+            # 6. Create the single cache containing all uploaded files
+            print("\nCreating context cache for all documents...")
+            self.cache = self.gemini_client.caches.create(
+                model=model,
+                config=types.CreateCachedContentConfig(
+                    display_name="Requirements documents",
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    contents=cache_contents,  # Pass the list of all uploaded File objects
+                    ttl='1800s',  # E.g., cache for 30 minutes
+                )
             )
-            self.uploaded_files.append(file_obj)
-            print(f"Uploaded: {file_obj.display_name} ({file_obj.name})")
+            self._save_cache_gemini()
 
-        cache_contents = [f for f in self.uploaded_files]
-        # 5. Define system instructions for the combined document analysis
-        SYSTEM_INSTRUCTION = "You are an expert tester who must analyze the provided documents and help generate test cases, test steps, test data and expected output"
-
-        # 6. Create the single cache containing all uploaded files
-        print("\nCreating context cache for all documents...")
-        self.cache = self.gemini_client.caches.create(
-            model=model,
-            config=types.CreateCachedContentConfig(
-                display_name="Requirements documents",
-                system_instruction=SYSTEM_INSTRUCTION,
-                contents=cache_contents,  # Pass the list of all uploaded File objects
-                ttl='1800s',  # E.g., cache for 30 minutes
-            )
-        )
-        self._save_cache_gemini()
-
-        print(f"Cache created: {self.cache.name}")
-        print(f"Total cached tokens: {self.cache.usage_metadata.total_token_count}")
+            print(f"Cache created: {self.cache.name}")
+            print(f"Total cached tokens: {self.cache.usage_metadata.total_token_count}")
 
     def _save_cache_gemini(self):
         # Save cache name to file
