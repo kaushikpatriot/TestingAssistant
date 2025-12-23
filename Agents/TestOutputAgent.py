@@ -317,8 +317,8 @@ class TestOutputAgent(PipelineStepAgent):
                                 3. List them in the format required
                                 ''' ,
                         output_format = ExpectedResult,
-                        provider = 'ollama',
-                        model = 'gpt-oss:20b' #'deepseek-r1:14b' #'qwen-coder:30b'#
+                        provider = 'gemini',
+                        model = 'gemini-2.5-pro' #'deepseek-r1:14b' #'qwen-coder:30b'#
                         )
     
     verify_model_config = ModelConfig(
@@ -330,8 +330,8 @@ class TestOutputAgent(PipelineStepAgent):
                                 1. Verify the input given and provide a score of the correctness of the input.
                                 '''  ,
                         output_format = TestOutputVerification,
-                        provider = 'ollama',
-                        model = 'deepseek-r1:14b'
+                        provider = 'gemini',
+                        model = 'gemini-2.5-pro'
                         )
 
     def __init__(self, test_module):
@@ -344,7 +344,7 @@ class TestOutputAgent(PipelineStepAgent):
 
     def load_input_data(self, sheetName):
         test_step_end_row, steps_df = self.excel_handler.excelToDfConverter(sheetName, "##Test Steps - Start", "##Test Steps - End")
-        allocation_end_row, allocation_df = self.excel_handler.excelToDfConverter(sheetName, "##allocation - Start", "##allocation - End")
+        allocation_end_row, allocation_df = self.excel_handler.excelToDfConverter(sheetName, "##allocation Steps - Start", "##allocation Steps - End")
         end_row = allocation_end_row if allocation_end_row else test_step_end_row
         return end_row, steps_df, allocation_df
 
@@ -403,7 +403,7 @@ class TestOutputAgent(PipelineStepAgent):
                 curr_row = self.excel_handler.writeDfToSheet(sheetName = sheetName, dfToWrite=output_df,
                                     startRow=end_row+2, startMarker="##Expected Output - Start", endMarker="##Expected Output - End")
 
-            # Save the workbook
-            self.excel_handler.save_wb()
+                # Save the workbook
+                self.excel_handler.save_wb()
         
 

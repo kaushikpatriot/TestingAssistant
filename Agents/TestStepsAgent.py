@@ -86,8 +86,8 @@ class TestStepAgent(PipelineStepAgent):
                                 3. List them in the format required
                                 ''' ,
                         output_format = TestCaseSteps,
-                        provider = 'ollama',
-                        model = 'gpt-oss:20b' #'deepseek-r1:14b' #'qwen-coder:30b'#
+                        provider = 'gemini',
+                        model = 'gemini-2.5-pro' #'deepseek-r1:14b' #'qwen-coder:30b'#
                         )
     
     verify_model_config = ModelConfig(
@@ -99,8 +99,8 @@ class TestStepAgent(PipelineStepAgent):
                                 1. Verify the input given and provide a score of the correctness of the input.
                                 '''  ,
                         output_format = TestStepVerification,
-                        provider = 'ollama',
-                        model = 'deepseek-r1:14b'
+                        provider = 'gemini',
+                        model = 'gemini-2.5-pro'
                         )
 
     def __init__(self, test_module):
@@ -125,7 +125,7 @@ class TestStepAgent(PipelineStepAgent):
         llm_client = LLMClient(**self.verify_model_config.model_dump())
         return llm_client.generate_content(input = output)
     
-    def execute(self, start=1, end=-1, verify = True, tries = 1):
+    def execute(self, start=1, end=-1, verify = False, tries = 1):
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
 
@@ -146,13 +146,18 @@ class TestStepAgent(PipelineStepAgent):
                         c for c in output_df.columns
                         if output_df[c].apply(lambda x: isinstance(x, list)).any()
                    ]
+            print(f'Writing Test Steps to File for {record_num+1}')
             curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=output_df.drop(columns=list_cols),
                                                startRow=1, startMarker="##Test Steps - Start", endMarker="##Test Steps - End")
-        
+            print(f'Written Test Steps to File for {record_num+1}')
             #Writing Sub steps in a separate set of rows. E.g. Allocation Steps
+            print(f'Writing Allocation Steps to File for {record_num+1}')
             for col in list_cols:
-                sub_df = pd.DataFrame(output_df[col].explode().to_list())
+                filtered_series = output_df.loc[output_df[col].str.len() > 0, col]
+                print(filtered_series)
+                sub_df = pd.DataFrame(filtered_series.explode().to_list())
+                # print(sub_df)
                 curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=sub_df,
                                             startRow=curr_row+1, startMarker=f"##{col} Steps - Start", endMarker=f"##{col} Steps - End")
-        
+            print(f'Written Test Steps to File for {record_num+1}')        
         self.excel_handler.save_wb()

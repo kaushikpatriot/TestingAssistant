@@ -7,13 +7,14 @@ from Helpers.OutputManager import CsvManager as csv
 
 class CollateralSteps(BaseModel):
    step: int = Field(description="This is the step number of the sequence of steps to be executed")
+   transaction_type: str = Field(description="This describes the transaction type applied e.g Deposit, Allocation etc")
    collateralGroup: list[str] = Field(description = '''The collateral groups to be used for this test case.''')
    collateralComponent: str = Field(description ='''The collateral components which will be used for this test case.''')
    isFungible: list[str] = Field(description = '''Indicates what are the different fungibility of collaterals used for this test case''')
 
 class TestCase(BaseModel):
   test_scenario_id: str = Field(description='This is the reference to the Test Combo Id from the Test Scenarios input. This acts as a trace back to the scenarios')
-  test_case_id: str = Field(description='''A unique ID for a test case. This should be of the format TC-0001, TC-0002 etc.
+  test_case_id: str = Field(description='''A unique ID for a test case. This should be of the format Scenario ID + TC-0001, Scenario ID + TC-0002 etc.
                                           ''')
   test_description: str = Field(description='''Describes the test case in detail primarily consisting of
                                                Overall Scenario - Insufficient MLN coverage
@@ -43,15 +44,18 @@ class TestCaseAgent(PipelineStepAgent):
                         knowledge_base_path='',
                         role = '''You are senior financial application tester who can write good test cases given the requirements and the test scenarios ''',
                         task = '''
-                                You required to carefully understand the requirements and the Test Scenario provided as **Input** and do the following
-                                1. Create an exhaustive list of test cases for the given scenario based on the given requirements 
-                                2. Keep each test case comprehensive and independent with necessary steps required to test effectively
-                                3. **DO NOT** generate cases for any other Test Scenario other than the scenario provided as **Input**
-                                3. List them in the format required
+                                You required to carefully understand the requirements and the Test Scenario in terms of the applicable dimensions and theis values provided as **Input** and do the following
+                                1. Create an list of test cases for the given scenario and the dimenstional values provided based on the given requirements 
+                                2. Each test case should help test **ONLY** the given set of dimensional values. 
+                                3. The Test cases can include variants in Collateral types or Collateral components that can effectively test the given scenario
+                                4. Keep each test case comprehensive and independent with necessary steps required to test effectively
+                                5. **DO NOT** generate cases for any other Test Scenario or dimensional values that are not provided as **Input**
+                                7. There can be more than one test case for a given scenario but only if it is required to test the scenario comprehensively. 
+                                6. List them in the format required
                                 ''' ,
                         output_format = TestCaseList,
-                        provider = 'ollama',
-                        model = 'gpt-oss:20b' #'deepseek-r1:14b' #'qwen-coder:30b'#
+                        provider = 'gemini',
+                        model = 'gemini-2.5-pro' #'deepseek-r1:14b' #'qwen-coder:30b'#
                         )
     
     verify_model_config = ModelConfig(
@@ -63,8 +67,8 @@ class TestCaseAgent(PipelineStepAgent):
                                 1. Verify the input given and provide a score of the correctness of the input.
                                 '''  ,
                         output_format = TestCaseVerification,
-                        provider = 'ollama',
-                        model = 'deepseek-r1:14b'
+                        provider = 'gemini',
+                        model = 'gemini-2.5-pro'
                         )
 
     def __init__(self, test_module):
@@ -96,6 +100,7 @@ class TestCaseAgent(PipelineStepAgent):
         final_df = pd.DataFrame()
         for record_num in range(len(self.input_df)):
             input_data = self.input_df.iloc[record_num]
+            print(f"\n Generating Test Cases for Scenario {record_num+1}")
             for i in range(tries):
                 generated_response = self.generate_content(input_data)
 
