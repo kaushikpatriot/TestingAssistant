@@ -2,7 +2,7 @@ from Agents.LLMConnector import LLMConnector
 import json
 from pydantic import BaseModel
 from abc import ABC, abstractmethod
-from typing import Type
+from typing import Optional, Type
 import pandas as pd
 import os
 
@@ -11,29 +11,33 @@ class LLMClient:
     '''
     This class acts as a common Client to connect with LLMs using LLMConnector for perform content generation or upload of files
     '''
-    def __init__(self, **params):
-        self.params = params
-        self.llm_connector = LLMConnector(self.params.get('test_module'))
+    def __init__(self, provider, model, knowledge_base_path, test_module):
+        self.llm_connector = LLMConnector(provider, model, knowledge_base_path, test_module)
 
     def upload_files(self):
-        self.llm_connector.upload_files(provider = self.params.get('provider'), folder_path = self.params.get('knowledge_base_path'), model = self.params.get('model'))
+        self.llm_connector.upload_files()
 
-    def generate_content(self, input=''):
-        prompt = f"Role: {self.params.get('role')}. Task: {self.params.get('task')}. **Input**: {input}"
-        response = self.llm_connector.chat(provider = self.params.get('provider'), prompt = prompt, model = self.params.get('model'), 
-                                           response_schema = self.params.get('output_format'), folder_path = self.params.get('knowledge_base_path'))
-        return json.loads(response)
+    def generate_content(self, prompt, response_schema=None):
+        response = self.llm_connector.chat(prompt, response_schema)
+        if response_schema:
+            return json.loads(response)
+        else:
+            return response        
 
 
 class ModelConfig(BaseModel):
     test_module: str
     knowledge_base_path: str
     role: str
+    task_template: str
     task: str
     output_format: Type[BaseModel]
     provider: str
     model: str
 
+class TextResponse(BaseModel):
+    text: str
+    proceed: bool
 
 class PipelineStepAgent(ABC):
     '''

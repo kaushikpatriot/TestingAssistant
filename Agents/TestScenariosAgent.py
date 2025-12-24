@@ -23,7 +23,7 @@ class TestComboSet(BaseModel):
                              application. 
                              ''')
     traceability: str = Field(description = '''This gives the references (comma separated) to the requirements from which the combination is derived''')
-
+    memberCode: str = Field(description="Take the member code from the masters data for whom the test case should be generated. **DO NOT REPEAT MEMBER CODES. EACH TEST CASE SHOULD HAVE A UNIQUE MEMBERCODE")
 
 class TestComboList(BaseModel):
     output: list[TestComboSet] = Field(description = 'Consists of all the Test Combination sets. ')
@@ -37,6 +37,7 @@ class TestScenarioAgent(PipelineStepAgent):
                         test_module = '',
                         knowledge_base_path='',
                         role = '''You are an expert test designer for financial application. You understand the nuances of requirements provided''',
+                        task_template='',
                         task = '''
                                 You required to carefully understand the requirements and the Test dimensions provided as **Input** and do the following
                                 1. Create an exhaustive list of dimensions from which test cases can be generated. **DO NOT** miss any valid combinations.
@@ -57,6 +58,7 @@ class TestScenarioAgent(PipelineStepAgent):
                         test_module = '',
                         knowledge_base_path='',
                         role = '''You are an expert test case verifier for financial application. You understand the nuances of requirements provided''',
+                        task_template='',
                         task = '''
                                 You required to carefully understand the requirements, the Test dimensions provided and the Test combinations is attached
                                 1. Verify the input given and provide a score of the correctness of the input.

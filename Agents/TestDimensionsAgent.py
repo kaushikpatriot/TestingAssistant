@@ -36,6 +36,7 @@ class TestDimensionAgent(PipelineStepAgent):
                         test_module = '',
                         knowledge_base_path='',
                         role = '''You are an expert test designer for financial application. You understand the nuances of requirements provided''',
+                        task_template = '',
                         task = '''
                                 You required to carefully understand the requirements and do the following
                                 1. Extract the test dimensions applicable for testing the requirements thoroughly.
@@ -51,6 +52,7 @@ class TestDimensionAgent(PipelineStepAgent):
                         test_module = '',
                         knowledge_base_path='',
                         role = '''You are an expert test case verifier for financial application. You understand the nuances of requirements provided''',
+                        task_template = '',
                         task = '''
                                 You required to carefully understand the requirements, the test dimensions provided
                                 1. Verify the input given and provide a score of the correctness of the input.

@@ -6,51 +6,53 @@ from datetime import datetime
 import json
 
 class LLMConnector:
-    def __init__(self, test_module = "General Knowledge"):
+    def __init__(self, provider="ollama", model="gpt-oss:20b", knowledge_base_path="", test_module = "General Knowledge"):
         self.ollama_url = os.getenv('OLLAMA_BASE_URL')
         self.ollama_api_key= os.getenv('OLLAMA_API_KEY')
         self.gemini_api_key = os.getenv('GOOGLE_API_KEY')
         self.gemini_client = genai.Client(api_key = self.gemini_api_key)
         self.ollama_knowledge_id = self._find_or_create_knowledge(test_module) 
+        self.chat_session = None
+        self.provider, self.model, self.knowledge_base_path = provider, model, knowledge_base_path
 
 #---------------------------------------Main Chat and file management functions-------------------------
-    def chat(self, provider, prompt, model, response_schema, folder_path=None):
-        if provider == 'ollama':
-            self.files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) 
-                if os.path.isfile(os.path.join(folder_path, f))]
-            response = self._chat_ollama(prompt, model, response_schema)
-        elif provider == 'gemini':
-            response = self._chat_gemini(prompt, model, response_schema)
+    def chat(self, prompt, response_schema):
+        if self.provider == 'ollama':
+            self.files = [os.path.join(self.knowledge_base_path, f) for f in os.listdir(self.knowledge_base_path) 
+                if os.path.isfile(os.path.join(self.knowledge_base_path, f))]
+            response = self._chat_ollama(prompt, response_schema)
+        elif self.provider == 'gemini':
+            response = self._chat_gemini(prompt, response_schema)
         else:
-            raise Exception(f"{provider} is an invalid provider. It can only be ollama or gemini")
+            raise Exception(f"{self.provider} is an invalid provider. It can only be ollama or gemini")
         return response
 
-    def upload_files(self, provider, folder_path, model):
+    def upload_files(self):
 
-        self.files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) 
-                if os.path.isfile(os.path.join(folder_path, f))]
+        self.files = [os.path.join(self.knowledge_base_path, f) for f in os.listdir(self.knowledge_base_path) 
+                if os.path.isfile(os.path.join(self.knowledge_base_path, f))]
         self.uploaded_files = []
-        if provider == 'ollama':
+        if self.provider == 'ollama':
             results = self._upload_files_ollama(self.files)
             # print(results)
-        elif provider == 'gemini':
-            self._upload_files_gemini(self.files, model)
+        elif self.provider == 'gemini':
+            self._upload_files_gemini(self.files)
         else:
-            raise Exception(f"{provider} is an invalid provider. It can only be ollama or gemini")
+            raise Exception(f"{self.provider} is an invalid provider. It can only be ollama or gemini")
 
 
-    def cleanup_files(self, provider):
-        if provider == 'ollama':
+    def cleanup_files(self):
+        if self.provider == 'ollama':
             self._cleanup_knowledge_files()
-        elif provider == 'gemini':
+        elif self.provider == 'gemini':
             self._delete_files_gemini()
         else:
-            raise Exception(f"{provider} is an invalid provider. It can only be ollama or gemini")
+            raise Exception(f"{self.provider} is an invalid provider. It can only be ollama or gemini")
 
 
 # -----------------------------------Ollama helper functions-------------------------------------------
 
-    def _chat_ollama(self, prompt, model = 'gpt-oss:20b', response_schema = None, folder_path = None, tries = 3):
+    def _chat_ollama(self, prompt, response_schema = None, tries = 3):
 
         response_schema_json = response_schema.model_json_schema()
 
@@ -74,7 +76,7 @@ class LLMConnector:
         }
 
         data = {
-        "model": f"{model}", #"gpt-oss:20b" , qwen3-coder:30b
+        "model": f"{self.model}", #"gpt-oss:20b" , qwen3-coder:30b
         "messages": [
             {
             "role": "user",
@@ -192,22 +194,27 @@ class LLMConnector:
     
 # -----------------------------------Gemini helper functions-------------------------------------------
 
-    def _chat_gemini(self, prompt, model = 'gemini-2.5-flash', response_schema = None):
+    def _chat_gemini(self, prompt, response_schema = None):
         self._load_cache_gemini()
 
-        response = self.gemini_client.models.generate_content(
-            model=model,
-            contents=[prompt],
-            config=types.GenerateContentConfig(
+        turn_config = None
+        if response_schema:
+            turn_config = types.GenerateContentConfig(
                 cached_content=self.cache.name,
                 response_mime_type='application/json',
-                response_schema=response_schema if response_schema else str 
+                response_schema=response_schema
             )
-        )
+
+        if not self.chat_session:
+            self.chat_session = self.gemini_client.chats.create(
+                model=self.model
+            )
+
+        response = self.chat_session.send_message(message=prompt, config=turn_config)
         return response.text
     
 
-    def _upload_files_gemini(self, files, model = 'gemini-2.5-flash'):
+    def _upload_files_gemini(self, files):
         try:
             self._load_cache_gemini()
             #Extending the cache time 
@@ -236,7 +243,7 @@ class LLMConnector:
             # 6. Create the single cache containing all uploaded files
             print("\nCreating context cache for all documents...")
             self.cache = self.gemini_client.caches.create(
-                model=model,
+                model=self.model,
                 config=types.CreateCachedContentConfig(
                     display_name="Requirements documents",
                     system_instruction=SYSTEM_INSTRUCTION,

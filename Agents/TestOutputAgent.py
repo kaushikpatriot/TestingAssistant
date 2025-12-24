@@ -309,6 +309,7 @@ class TestOutputAgent(PipelineStepAgent):
                         test_module = '',
                         knowledge_base_path='',
                         role = '''You are senior financial application tester who can write test steps required to the execute the test case given the requirements and the test case ''',
+                        task_template = '',
                         task = '''
                                 You required to carefully understand the requirements and the Test Case provided as **Input** and do the following
                                 1. Create the necessary and relevant test steps required to effectively test the given test case. 
@@ -325,6 +326,7 @@ class TestOutputAgent(PipelineStepAgent):
                         test_module = '',
                         knowledge_base_path='',
                         role = '''You are an expert test case verifier for financial application. You understand the nuances of requirements provided''',
+                        task_template = '',
                         task = '''
                                 You required to carefully understand the requirements, the Test case provided and the Test steps is attached
                                 1. Verify the input given and provide a score of the correctness of the input.
