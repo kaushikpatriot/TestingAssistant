@@ -12,6 +12,7 @@ class LLMClient:
     This class acts as a common Client to connect with LLMs using LLMConnector for perform content generation or upload of files
     '''
     def __init__(self, provider, model, knowledge_base_path, test_module):
+        # print(provider, model)
         self.llm_connector = LLMConnector(provider, model, knowledge_base_path, test_module)
 
     def upload_files(self):

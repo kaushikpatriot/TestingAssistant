@@ -78,14 +78,14 @@ class TestStepAgent(PipelineStepAgent):
                         test_module = '',
                         knowledge_base_path='',
                         role = '''You are senior financial application tester who can write test steps required to the execute the test case given the requirements and the test case ''',
-                        task_template = '',
-                        task = '''
-                                You required to carefully understand the requirements and the Test Case provided as **Input** and do the following
+                        task_template = '''
+                                You required to carefully understand the requirements and the Test Case provided here {test_case} and do the following
                                 1. Create the necessary and relevant test steps required to effectively test the given test case. 
                                 2. Keep each test step comprehensive and independent to test effectively
                                 3. **DO NOT** generate steps for any other Test cases other than the Test case provided as **Input**
                                 3. List them in the format required
-                                ''' ,
+                                ''',
+                        task = '' ,
                         output_format = TestCaseSteps,
                         provider = 'gemini',
                         model = 'gemini-2.5-pro' #'deepseek-r1:14b' #'qwen-coder:30b'#
@@ -111,31 +111,39 @@ class TestStepAgent(PipelineStepAgent):
         self.verify_model_config.test_module = test_module
         self.verify_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
         self.excel_handler = ExcelManager(mode = 'new', filepath = os.getenv('TEST_DATA_FILE'))
+        self.generate_llm_client = LLMClient(self.generate_model_config.provider, self.generate_model_config.model, self.generate_model_config.knowledge_base_path, test_module) #**self.generate_model_config.model_dump())
+        self.verify_llm_client = LLMClient(self.verify_model_config.provider, self.verify_model_config.model, self.verify_model_config.knowledge_base_path, test_module) #**self.verify_model_config.model_dump())
 
     def load_input_data(self):
         self.input_df = pd.read_csv(f"{os.getenv('TEST_CASES_FILE')}")
 
     def load_knowledge_base(self):
-        llm_client = LLMClient(**self.generate_model_config.model_dump())
-        llm_client.upload_files()
+        self.generate_llm_client.upload_files()
 
-    def generate_content(self, input):
-        llm_client = LLMClient(**self.generate_model_config.model_dump())
-        return llm_client.generate_content(input)
+    def generate_content(self, prompt, response_schema=None):
+        return self.generate_llm_client.generate_content(prompt, response_schema)
     
     def verify_content(self, output):
-        llm_client = LLMClient(**self.verify_model_config.model_dump())
-        return llm_client.generate_content(input = output)
+        return self.verify_llm_client.generate_content(input = output)
     
     def execute(self, start=1, end=-1, verify = False, tries = 1):
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
 
         self.load_input_data()
+        knowledge_files = os.listdir(self.generate_model_config.knowledge_base_path)
+        gen_prompt = f'''I have uploaded the following documents. You required to carefully understand the requirements, processing rules, static data, masters that have already been uploaded. 
+        Can you confirm if you have the following documents in your cache?
+        {str(knowledge_files)}
+        '''
+        turn1_response = self.generate_content(gen_prompt)
+        print(turn1_response)
         for record_num in range(start-1, (len(self.input_df) if end < 0 else end)):#len(self.input_df)):
             input_data = self.input_df.iloc[record_num]
+            self.generate_model_config.task = self.generate_model_config.task_template.format(test_case = str(input_data))
+            prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task
             for i in range(tries):
-                generated_response = self.generate_content(input_data)
+                generated_response = self.generate_content(prompt, self.generate_model_config.output_format)
 
                 if verify:
                     verify_response = self.verify_content(generated_response)
@@ -162,4 +170,4 @@ class TestStepAgent(PipelineStepAgent):
                 curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=sub_df,
                                             startRow=curr_row+1, startMarker=f"##{col} Steps - Start", endMarker=f"##{col} Steps - End")
             print(f'Written Test Steps to File for {record_num+1}')        
-        self.excel_handler.save_wb()
+            self.excel_handler.save_wb()

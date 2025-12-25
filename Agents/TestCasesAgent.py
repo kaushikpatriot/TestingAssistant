@@ -8,9 +8,9 @@ from Helpers.OutputManager import CsvManager as csv
 class CollateralSteps(BaseModel):
    step: int = Field(description="This is the step number of the sequence of steps to be executed")
    transaction_type: str = Field(description="This describes the transaction type applied e.g Deposit, Allocation etc")
-   collateralGroup: list[str] = Field(description = '''The collateral groups to be used for this test case.''')
-   collateralComponent: str = Field(description ='''The collateral components which will be used for this test case.''')
-   isFungible: list[str] = Field(description = '''Indicates what are the different fungibility of collaterals used for this test case''')
+   collateralGroup: list[str] = Field(description = '''The collateral groups to be used for this test case. Use only those Collateral Groups described in the Test Scenario''')
+   collateralComponent: str = Field(description ='''The collateral components which will be used for this test case. Use only those Collateral Components described in the Test Scenario''')
+   isFungible: list[str] = Field(description = '''Indicates what are the different fungibility of collaterals used for this test case. Use only those required for the Test Scenario''')
 
 # class TestPlan(BaseModel):
 #     plan_description: str = Field(description = "Describe how this Test case should be tested step by step. Keep the description to not more than 50 words")
@@ -18,6 +18,7 @@ class CollateralSteps(BaseModel):
 
 class TestCase(BaseModel):
   test_scenario_id: str = Field(description='This is the reference to the Test Combo Id from the Test Scenarios input. This acts as a trace back to the scenarios')
+  target_scenario: str = Field(description='Briefly describe the scenario for which the test case is generated and list out the dimensions and their values that will constrain the scope of this scenario')
   test_case_id: str = Field(description='''A unique ID for a test case. This should be of the format Scenario ID + TC-0001, Scenario ID + TC-0002 etc.
                                           ''')
   given: str = Field(description = '''This is the initial condition that needs to be there for the test case to be further processed. 
@@ -43,22 +44,28 @@ class TestCaseList(BaseModel):
 class TestCaseVerification(BaseModel):
     overall_score: int = Field(description = 'Provides a score out of 100 in terms of correctness of the test cases')
 
-
 class TestCaseAgent(PipelineStepAgent):
     generate_model_config = ModelConfig(
                         test_module = '',
                         knowledge_base_path='',
                         role = '''You are senior financial application tester who can write good test cases given the requirements and the test scenarios ''',
                         task_template = '''
-                                Now that you have the requirements, here is a specific scenario {input}. 
-                                The test cases generated should STRICTLY adhere to the criteria defined in this specific Test Scenario.
+                                Now that you have the requirements, here is a specific scenario 
+                                {scenario_id}
+                                {scenario}
+                                The test cases generated should **STRICTLY** adhere to the criteria defined in this specific Test Scenario.
+                                Refer to the background documents for requirements, but **ignore** those that are not relevant
+                                for this specific scenario.
                                 Do the following
                                 1. Create test cases for the given specific scenario based on the given requirements. 
                                 2. Each test case should help test **ONLY** the given scenario. 
                                 3. Keep each test case comprehensive and independent with necessary steps required to test effectively
                                 4. **DO NOT** generate cases for any other Test Scenario or dimensional values that are not provided.
                                 5. List them in the format required
-                                ''' ,
+                                6. Use a different memberCode for each Test Case from the Masters data attached
+                                7. Use only those segments available for which MLN requirements are defined in the Masters file. **DO NOT use any other segment
+                                8. Refer to the Static Data file for the list of applicable Collateral Groups, Collateral Components and Collateral Types
+                                  ''' ,
                         task = '',
                         output_format = TestCaseList,
                         provider = 'gemini',
@@ -90,7 +97,6 @@ class TestCaseAgent(PipelineStepAgent):
 
     def load_input_data(self):
         self.input_df = pd.read_csv(f"{os.getenv('TEST_SCENARIOS_FILE')}")
-        self.test_dim = pd.read_csv(f"{os.getenv('TEST_DIMENSIONS_FILE')}")
 
     def load_knowledge_base(self):
         self.generate_llm_client.upload_files()
@@ -108,37 +114,28 @@ class TestCaseAgent(PipelineStepAgent):
 
         self.load_input_data()
         final_df = pd.DataFrame()
-        # gen_prompt = '''I have uploaded the following documents. You required to carefully understand the requirements, processing rules, static data, masters that have already been uploaded. 
-        # Can you confirm if you have the following documents in your cache?
-        # - CM-CA-Allocation-SS-Overview_v01.txt
-        # - CM-MLN_Blocks-Business_v01.txt
-        # - CM-SS-C-Masters_v02.txt
-        # - CM-StaticData_v01.txt
-        # - CM-Testing-Overview_v03.txt
-        # '''
-        gen_prompt = '''When given this scenario 
-        Test for First Time Allocation at CM level Allocation only with Collateral deposited being from Collateral Group "CASH" and Collateral Component "CASH" only. The Collateral Deposited will be sufficient to fulfil allocation request
-
-        What is your understanding of the Scenario that is given to you? What are the collateral groups, collateral components and collateral types
-        applicable to generate test cases for this scenario alone?
+        knowledge_files = os.listdir(self.generate_model_config.knowledge_base_path)
+        gen_prompt = f'''I have uploaded the following documents. You required to carefully understand the requirements, processing rules, static data, masters that have already been uploaded. 
+        Can you confirm if you have the following documents in your cache?
+        {str(knowledge_files)}
         '''
         turn1_response = self.generate_content(gen_prompt)
-
         print(turn1_response)
-        # for record_num in range(3):#len(self.input_df)):
-        #     scenario = self.input_df.iloc[record_num]
-        #     self.generate_model_config.task = self.generate_model_config.task_template.format(input=str(scenario))
-        #     print(f"\n Generating Test Cases for Scenario {record_num+1}")
-        #     for i in range(tries):
-        #         prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task
-        #         generated_response = self.generate_content(prompt, self.generate_model_config.output_format)
-        #         if verify:
-        #             verify_response = self.verify_content(generated_response)
-        #             if verify_response['overall_score'] >= 70:
-        #                 break
-        #     output_df = pd.DataFrame(generated_response['output'])
-        #     if final_df.empty:
-        #         final_df = output_df
-        #     else:
-        #         final_df = pd.concat([final_df, output_df], ignore_index = True)
-        # csv.writeDfToCsv(final_df, os.getenv('TEST_CASES_FILE'))
+        for record_num in range(len(self.input_df)):
+            scenario = self.input_df.iloc[record_num]
+            self.generate_model_config.task = self.generate_model_config.task_template.format(scenario_id = str(scenario['combo_id']),scenario=str(scenario['combo_description']))
+            print(f"\n Generating Test Cases for Scenario {record_num+1}")
+            for i in range(tries):
+                prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task
+                # print(prompt)
+                generated_response = self.generate_content(prompt, self.generate_model_config.output_format)
+                if verify:
+                    verify_response = self.verify_content(generated_response)
+                    if verify_response['overall_score'] >= 70:
+                        break
+            output_df = pd.DataFrame(generated_response['output'])
+            if final_df.empty:
+                final_df = output_df
+            else:
+                final_df = pd.concat([final_df, output_df], ignore_index = True)
+            csv.writeDfToCsv(final_df, os.getenv('TEST_CASES_FILE'))

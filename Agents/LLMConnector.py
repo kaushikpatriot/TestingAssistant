@@ -7,11 +7,15 @@ import json
 
 class LLMConnector:
     def __init__(self, provider="ollama", model="gpt-oss:20b", knowledge_base_path="", test_module = "General Knowledge"):
-        self.ollama_url = os.getenv('OLLAMA_BASE_URL')
-        self.ollama_api_key= os.getenv('OLLAMA_API_KEY')
-        self.gemini_api_key = os.getenv('GOOGLE_API_KEY')
-        self.gemini_client = genai.Client(api_key = self.gemini_api_key)
-        self.ollama_knowledge_id = self._find_or_create_knowledge(test_module) 
+        if provider == "ollama":
+            self.ollama_url = os.getenv('OLLAMA_BASE_URL')
+            self.ollama_api_key= os.getenv('OLLAMA_API_KEY')
+            self.ollama_knowledge_id = self._find_or_create_knowledge(test_module) 
+        elif provider == "gemini":
+            self.gemini_api_key = os.getenv('GOOGLE_API_KEY')
+            self.gemini_client = genai.Client(api_key = self.gemini_api_key)
+        else:
+            raise Exception('Invalid provider: {provider}')
         self.chat_session = None
         self.provider, self.model, self.knowledge_base_path = provider, model, knowledge_base_path
 
