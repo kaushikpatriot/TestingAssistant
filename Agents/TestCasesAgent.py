@@ -5,17 +5,6 @@ import pandas as pd
 import os
 from Helpers.OutputManager import CsvManager as csv
 
-class CollateralSteps(BaseModel):
-   step: int = Field(description="This is the step number of the sequence of steps to be executed")
-   transaction_type: str = Field(description="This describes the transaction type applied e.g Deposit, Allocation etc")
-   collateralGroup: list[str] = Field(description = '''The collateral groups to be used for this test case. Use only those Collateral Groups described in the Test Scenario''')
-   collateralComponent: str = Field(description ='''The collateral components which will be used for this test case. Use only those Collateral Components described in the Test Scenario''')
-   isFungible: list[str] = Field(description = '''Indicates what are the different fungibility of collaterals used for this test case. Use only those required for the Test Scenario''')
-
-# class TestPlan(BaseModel):
-#     plan_description: str = Field(description = "Describe how this Test case should be tested step by step. Keep the description to not more than 50 words")
-#     test_steps_outline: list[CollateralSteps] = Field(description = "This lists the steps that will be required to be generated inorder to test this test case")
-
 class TestCase(BaseModel):
   test_scenario_id: str = Field(description='This is the reference to the Test Combo Id from the Test Scenarios input. This acts as a trace back to the scenarios')
   target_scenario: str = Field(description='Briefly describe the scenario for which the test case is generated and list out the dimensions and their values that will constrain the scope of this scenario')
@@ -23,26 +12,18 @@ class TestCase(BaseModel):
                                           ''')
   given: str = Field(description = '''This is the initial condition that needs to be there for the test case to be further processed. 
                      This should typically represent the sequence of transactions that should be processed to arrive at the initial state''')
-  given_steps: list[CollateralSteps] = Field(description='''This is the list of steps to be executed to get to the initial state''')
+  given_steps: str = Field(description='''This is the list of steps to be executed to arrive at the initial state including the collateral type and the amounts to be used''')
   when: str = Field(description="This is the event or the set of events that will be processed in order test the given case")
-  when_steps: list[CollateralSteps] = Field(description='''This is the step or the set of steps that represent the actual event to be tested''')
+  when_steps: str = Field(description='''This is the step or set of steps that represent the actual event to be tested including the collateral types and the amounts''')
   then: str = Field(description="This is the expected result after the event is or events are processed")
-#   test_description: str = Field(description='''Describes the test case in detail using the scenario given as input.''')
-#   key_validation: str = Field(description = "Lists the key validations for this test case as bullet points prefixed by *")
-#   segment_scope: str = Field(description="Whether single segment or multiple segments" )
-#   order: str = Field(description='''State whether Forward (priority order) or Reverse (reverse priority order)''')
-#   test_plan: TestPlan = Field(description='''List the sequence of steps that can truly help verify the test case 
-#                   Use all applicable Collateral types as per the static data to effectively test the case
-#                   Refer to the static data for the applicable collateral types. 
-#                   Generate as many steps as required by the Test Scenarios document.
-#                   Ensure there is a good coverage of all relevant collateral types''')
   memberCode: str = Field(description="Use the same memberCode as that of the Scenario for which the Test Case is generated. **DO NOT CHANGE THE MEMBERCODE**")
 
 class TestCaseList(BaseModel):
     output: list[TestCase]
 
 class TestCaseVerification(BaseModel):
-    overall_score: int = Field(description = 'Provides a score out of 100 in terms of correctness of the test cases')
+    isCorrect: bool = Field(description = 'Is the output correct or not. Verify the sequence of steps, the collateral types and the amounts used to verify')
+    correction: str = Field(description = 'If the output is incorrect, the describe what should be corrected. If the output is correct, this will be blank')
 
 class TestCaseAgent(PipelineStepAgent):
     generate_model_config = ModelConfig(
@@ -57,7 +38,7 @@ class TestCaseAgent(PipelineStepAgent):
                                 Refer to the background documents for requirements, but **ignore** those that are not relevant
                                 for this specific scenario.
                                 Do the following
-                                1. Create test cases for the given specific scenario based on the given requirements. 
+                                1. Create one test case for each given specific scenario based on the given requirements. 
                                 2. Each test case should help test **ONLY** the given scenario. 
                                 3. Keep each test case comprehensive and independent with necessary steps required to test effectively
                                 4. **DO NOT** generate cases for any other Test Scenario or dimensional values that are not provided.
@@ -76,11 +57,17 @@ class TestCaseAgent(PipelineStepAgent):
                         test_module = '',
                         knowledge_base_path='',
                         role = '''You are an expert test case verifier for financial application. You understand the nuances of requirements provided''',
-                        task_template = '',
-                        task = '''
-                                You required to carefully understand the requirements, the Test dimensions provided and the Test combinations is attached
-                                1. Verify the input given and provide a score of the correctness of the input.
+                        task_template = '''
+                                You required to carefully understand the requirements, the Test dimensions provided and the test case.
+                                {verifier_feedback}
+                                1. Verify if the sequence of steps in {given_steps} is correct or not
+                                2. Verify if the amounts used in the {given_steps} is correct or not
+                                3. Verify if the sequence of steps in {when_steps} is correct or not
+                                4. Verify if the amounts used in {when_steps} is correct or not
+                                5. Verify if {then} is correct or not
+                                If all of these are correct then respond in the format required
                                 '''  ,
+                        task = '',
                         output_format = TestCaseVerification,
                         provider = 'gemini',
                         model = 'gemini-2.5-pro'
@@ -105,10 +92,10 @@ class TestCaseAgent(PipelineStepAgent):
     def generate_content(self, prompt, response_schema=None):
         return self.generate_llm_client.generate_content(prompt, response_schema)
     
-    def verify_content(self, output):
-        return self.verify_llm_client.generate_content(input = output)
+    def verify_content(self, prompt, response_schema=None):
+        return self.verify_llm_client.generate_content(prompt, response_schema)
     
-    def execute(self, verify = False, tries = 1):
+    def execute(self, verify = True, tries = 3):
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
 
@@ -121,21 +108,32 @@ class TestCaseAgent(PipelineStepAgent):
         '''
         turn1_response = self.generate_content(gen_prompt)
         print(turn1_response)
-        for record_num in range(len(self.input_df)):
+        for record_num in range(14,15):#len(self.input_df)):
             scenario = self.input_df.iloc[record_num]
-            self.generate_model_config.task = self.generate_model_config.task_template.format(scenario_id = str(scenario['combo_id']),scenario=str(scenario['combo_description']))
+            self.generate_model_config.task = self.generate_model_config.task_template.format(scenario_id = str(scenario['scenario_id']),scenario=str(scenario['scenario_description']))
             print(f"\n Generating Test Cases for Scenario {record_num+1}")
+            verifier_feedback = ''
             for i in range(tries):
+                #Generation
                 prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task
-                # print(prompt)
                 generated_response = self.generate_content(prompt, self.generate_model_config.output_format)
+                output_df = pd.DataFrame(generated_response['output'])
+                
+                #Verification                
+                self.verify_model_config.task = self.verify_model_config.task_template.format(given_steps = output_df['given_steps'], when_steps = output_df['when_steps'], then = output_df['then'], verifier_feedback = verifier_feedback)    
+                prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task
                 if verify:
-                    verify_response = self.verify_content(generated_response)
-                    if verify_response['overall_score'] >= 70:
+                    verify_response = self.verify_content(prompt,self.verify_model_config.output_format)
+                    if verify_response['isCorrect']:
                         break
-            output_df = pd.DataFrame(generated_response['output'])
-            if final_df.empty:
-                final_df = output_df
+                    else:
+                        verifier_feedback = verify_response['correction']
+
+            if verify_response['isCorrect']:
+                if final_df.empty:
+                    final_df = output_df
+                else:
+                    final_df = pd.concat([final_df, output_df], ignore_index = True)
+                csv.writeDfToCsv(final_df, os.getenv('TEST_CASES_FILE'))
             else:
-                final_df = pd.concat([final_df, output_df], ignore_index = True)
-            csv.writeDfToCsv(final_df, os.getenv('TEST_CASES_FILE'))
+                print(f'Unable to generate correct test case for Scenario {record_num+1}')

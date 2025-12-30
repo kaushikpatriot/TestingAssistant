@@ -17,6 +17,8 @@ class AllocationDetails(BaseModel):
   txn_type: str = Field(description = "This can have only 4 possible values. Allocate, De-allocate and Transfer In and Transfer Out")
   amt: float = Field(description="This is the amount of the transaction. Allocation and Transfer In are a positive amounts, De-allocation and Transfer Out will be negative.")
   cum_amt: float = Field(description="This is the cumulative allocation outstanding after the transaction is performed. This will take into account the allocation transactions in the previous steps too ")
+  exp_amt: float = Field(description='''This is the expected amount of allocation after the request is processed. It is the same as cum_amt if the transaction succeeds. 
+                         If the request fails then this amount is the same as the last successful request''')
   trfToSeg: str = Field(description="This the segment to which allocation will be transfered")
   pass_fail: str = Field(description = "This indicates if the given allocation step passes or fails")
   reason: str = Field(description = "If the allocation step fails, give a short reason for failure in less than 20 words")
@@ -71,7 +73,8 @@ class TestCaseSteps(BaseModel):
   output: list[TestCaseStep]
 
 class TestStepVerification(BaseModel):
-    overall_score: int = Field(description = 'Provides a score out of 100 in terms of correctness of the test steps')
+    isCorrect: bool = Field(description = 'Reports True if the output is correct, False if wrong')
+    correction: str = Field(description = 'Describe what needs correction')
 
 class TestStepAgent(PipelineStepAgent):
     generate_model_config = ModelConfig(
@@ -79,7 +82,15 @@ class TestStepAgent(PipelineStepAgent):
                         knowledge_base_path='',
                         role = '''You are senior financial application tester who can write test steps required to the execute the test case given the requirements and the test case ''',
                         task_template = '''
-                                You required to carefully understand the requirements and the Test Case provided here {test_case} and do the following
+                                You required to carefully understand the requirements and the Test Case provided here 
+                                {target_scenario}
+                                {test_case_id}
+                                {given}
+                                {when}
+                                {then} 
+                                {memberCode}
+                                and also consider the verifier's feedback {feedback} if available
+                                and do the following
                                 1. Create the necessary and relevant test steps required to effectively test the given test case. 
                                 2. Keep each test step comprehensive and independent to test effectively
                                 3. **DO NOT** generate steps for any other Test cases other than the Test case provided as **Input**
@@ -94,12 +105,13 @@ class TestStepAgent(PipelineStepAgent):
     verify_model_config = ModelConfig(
                         test_module = '',
                         knowledge_base_path='',
-                        role = '''You are an expert test case verifier for financial application. You understand the nuances of requirements provided''',
-                        task_template = '',
-                        task = '''
+                        role = '''You are an expert test data verifier for financial application. You understand the nuances of requirements provided''',
+                        task_template = '''
                                 You required to carefully understand the requirements, the Test case provided and the Test steps is attached
-                                1. Verify the input given and provide a score of the correctness of the input.
-                                '''  ,
+                                {test_steps}
+                                1. Verify the output primarily the steps, collateral types used and the amounts. If these are correct, you can report the steps as correct.
+                                ''',
+                        task =  '',
                         output_format = TestStepVerification,
                         provider = 'gemini',
                         model = 'gemini-2.5-pro'
@@ -123,10 +135,10 @@ class TestStepAgent(PipelineStepAgent):
     def generate_content(self, prompt, response_schema=None):
         return self.generate_llm_client.generate_content(prompt, response_schema)
     
-    def verify_content(self, output):
-        return self.verify_llm_client.generate_content(input = output)
+    def verify_content(self, prompt, response_schema=None):
+        return self.verify_llm_client.generate_content(prompt, response_schema)
     
-    def execute(self, start=1, end=-1, verify = False, tries = 1):
+    def execute(self, start=1, end=-1, verify = True, tries = 3):
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
 
@@ -138,36 +150,50 @@ class TestStepAgent(PipelineStepAgent):
         '''
         turn1_response = self.generate_content(gen_prompt)
         print(turn1_response)
+
+        feedback = ''
         for record_num in range(start-1, (len(self.input_df) if end < 0 else end)):#len(self.input_df)):
             input_data = self.input_df.iloc[record_num]
-            self.generate_model_config.task = self.generate_model_config.task_template.format(test_case = str(input_data))
+            self.generate_model_config.task = self.generate_model_config.task_template.format(target_scenario = str(input_data["target_scenario"]),
+                                                                                              test_case_id = str(input_data["test_case_id"]), 
+                                                                                              given = str(input_data["given"]) + '\n' + str(input_data["given_steps"]),
+                                                                                              when = str(input_data["when"]) + '\n' + str(input_data["when_steps"]),
+                                                                                              then = str(input_data["then"]),
+                                                                                              memberCode = str(input_data['memberCode']),
+                                                                                              feedback = feedback)
             prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task
             for i in range(tries):
                 generated_response = self.generate_content(prompt, self.generate_model_config.output_format)
-
+                output_df = pd.DataFrame(generated_response['output'])
                 if verify:
-                    verify_response = self.verify_content(generated_response)
-                    if verify_response['overall_score'] >= 70:
+                    self.verify_model_config.task = self.verify_model_config.task_template.format(test_steps = str(output_df))
+                    prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task
+                    verify_response = self.verify_content(prompt, self.verify_model_config.output_format)
+                    if verify_response['isCorrect']:
                         break
-            output_df = pd.DataFrame(generated_response['output'])
-            self.excel_handler.createWorksheet(sheetName=input_data['test_case_id'])
-            #Identify columns that have lists as its value. They will be written out separately on Excel
-            list_cols = [
-                        c for c in output_df.columns
-                        if output_df[c].apply(lambda x: isinstance(x, list)).any()
-                   ]
-            print(f'Writing Test Steps to File for {record_num+1}')
-            curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=output_df.drop(columns=list_cols),
-                                               startRow=1, startMarker="##Test Steps - Start", endMarker="##Test Steps - End")
-            print(f'Written Test Steps to File for {record_num+1}')
-            #Writing Sub steps in a separate set of rows. E.g. Allocation Steps
-            print(f'Writing Allocation Steps to File for {record_num+1}')
-            for col in list_cols:
-                filtered_series = output_df.loc[output_df[col].str.len() > 0, col]
-                print(filtered_series)
-                sub_df = pd.DataFrame(filtered_series.explode().to_list())
-                # print(sub_df)
-                curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=sub_df,
-                                            startRow=curr_row+1, startMarker=f"##{col} Steps - Start", endMarker=f"##{col} Steps - End")
-            print(f'Written Test Steps to File for {record_num+1}')        
-            self.excel_handler.save_wb()
+                    else:
+                        feedback = verify_response['correction']
+            if verify_response['isCorrect']:
+                self.excel_handler.createWorksheet(sheetName=input_data['test_case_id'])
+                #Identify columns that have lists as its value. They will be written out separately on Excel
+                list_cols = [
+                            c for c in output_df.columns
+                            if output_df[c].apply(lambda x: isinstance(x, list)).any()
+                    ]
+                # print(f'Writing Test Steps to File for {record_num+1}')
+                curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=output_df.drop(columns=list_cols),
+                                                startRow=1, startMarker="##Test Steps - Start", endMarker="##Test Steps - End")
+                print(f'Written Test Steps to File for {record_num+1}')
+                #Writing Sub steps in a separate set of rows. E.g. Allocation Steps
+                # print(f'Writing Allocation Steps to File for {record_num+1}')
+                for col in list_cols:
+                    filtered_series = output_df.loc[output_df[col].str.len() > 0, col]
+                    print(filtered_series)
+                    sub_df = pd.DataFrame(filtered_series.explode().to_list())
+                    # print(sub_df)
+                    curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=sub_df,
+                                                startRow=curr_row+1, startMarker=f"##{col} Steps - Start", endMarker=f"##{col} Steps - End")
+                print(f'Written Allocation Steps to File for {record_num+1}')        
+                self.excel_handler.save_wb()
+            else:
+                print(f"Unable to generate test steps correctly for {input_data['test_case_id']} because of {feedback}")

@@ -6,3 +6,4 @@ dotenv
 openpyxl
 fastapi
 uvicorn
+PyYAML

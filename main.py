@@ -4,7 +4,9 @@ from Agents.TestDimensionsAgent import TestDimensionAgent
 from Agents.TestCasesAgent import TestCaseAgent
 from Agents.TestStepsAgent import TestStepAgent
 from Agents.TestOutputAgent import TestOutputAgent
+from Helpers.TestScenarioGenerator import TestScenarioGenerator
 import sys
+import os
 
 load_dotenv()
 
@@ -15,6 +17,8 @@ def generateDimensions():
 
 def generateScenarios():
     print(f'Generating Test Scenarios \n')
+    # scenario_gen = TestScenarioGenerator()
+    # scenario_gen.generateScenarios()
     test_sc_agent = TestScenarioAgent("Cash Allocation")
     test_sc_agent.execute()
 
