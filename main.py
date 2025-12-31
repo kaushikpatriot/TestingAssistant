@@ -27,10 +27,10 @@ def generateTestCases():
     test_cs_agent = TestCaseAgent("Cash Allocation")
     test_cs_agent.execute()
 
-def generateTestSteps():
+def generateTestSteps(start, end):
     print(f'Generating Test Steps \n')
     test_st_agent = TestStepAgent("Cash Allocation")
-    test_st_agent.execute()
+    test_st_agent.execute(start, end)
 
 def generateTestOutput(sheets=None):
     print(f'Generating Test Output \n')
@@ -49,7 +49,15 @@ if __name__ == '__main__':
             case 'cas':
                 generateTestCases()
             case 'stp':
-                generateTestSteps()
+                if len(sys.argv) == 2:
+                    start = 1
+                    end = -1
+                elif len(sys.argv) == 4:
+                    start = int(sys.argv[2])
+                    end = int(sys.argv[3])
+                else:
+                    raise Exception('Invalid set of params for Test Step generation')
+                generateTestSteps(start= start, end = end)
             case 'out':
                 if len(sys.argv) > 2:
                     sheets = sys.argv[2].split(',')

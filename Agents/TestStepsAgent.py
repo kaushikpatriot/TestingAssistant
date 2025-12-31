@@ -16,11 +16,13 @@ class AllocationDetails(BaseModel):
   cliCode: str = Field(description="This is the client code")
   txn_type: str = Field(description = "This can have only 4 possible values. Allocate, De-allocate and Transfer In and Transfer Out")
   amt: float = Field(description="This is the amount of the transaction. Allocation and Transfer In are a positive amounts, De-allocation and Transfer Out will be negative.")
-  cum_amt: float = Field(description="This is the cumulative allocation outstanding after the transaction is performed. This will take into account the allocation transactions in the previous steps too ")
-  exp_amt: float = Field(description='''This is the expected amount of allocation after the request is processed. It is the same as cum_amt if the transaction succeeds. 
-                         If the request fails then this amount is the same as the last successful request''')
+  cum_amt: float = Field(description='''This is the cumulative allocation outstanding after the transaction is performed.
+                         Irrespective of whether the request PASS or FAIL, cum_amt is filled as that will be the actual request made''')
+  exp_amt: float = Field(description='''This is the expected amount of outstanding allocation after the request is sucessfully processed. It is the same as cum_amt if the transaction *PASS*es. 
+                         If the request *FAIL*s then this amount is the same as the last successful request. ''')
   trfToSeg: str = Field(description="This the segment to which allocation will be transfered")
-  pass_fail: str = Field(description = "This indicates if the given allocation step passes or fails")
+  pass_fail: str = Field(description = '''This indicates if the given allocation step passes or fails. If sufficient collateral is unavailable for allocation, this request is marked as FAIL. 
+                                        Otherwise mark it as PASS''')
   reason: str = Field(description = "If the allocation step fails, give a short reason for failure in less than 20 words")
   
 
@@ -65,7 +67,7 @@ class TestCaseStep(BaseModel):
                                   E.g CM, FNO etc **THIS DOES NOT APPLY TO TRANSFER OF ALLOCATION''')  
   allocation: list[AllocationDetails] = Field(description='''Applies only when the event is Allocation. Empty for all other events. This event will hold Allocation, De-allocation and Transfer events. 
                                               The allocation process has to consider every line of this data and use it to allocate Cash where applicable as per the rules given''')
-  pass_fail: str = Field(description = "This indicates if the overall transaction step passes or fails")
+  pass_fail: str = Field(description = "This indicates if the overall transaction step passes or fails. Mark this as FAIL even if one of the Allocation request fails")
   reason: str = Field(description = "If the transaction step fails, give a short reason for failure in less than 20 words")
 
 
@@ -107,7 +109,15 @@ class TestStepAgent(PipelineStepAgent):
                         knowledge_base_path='',
                         role = '''You are an expert test data verifier for financial application. You understand the nuances of requirements provided''',
                         task_template = '''
-                                You required to carefully understand the requirements, the Test case provided and the Test steps is attached
+                                Here is the test case for which test steps are being generated. 
+                                {target_scenario}
+                                {test_case_id}
+                                {given}
+                                {when}
+                                {then} 
+                                {memberCode}
+                                You required to carefully understand the requirements and the test case provided. 
+                                Here are the Test steps generated. 
                                 {test_steps}
                                 1. Verify the output primarily the steps, collateral types used and the amounts. If these are correct, you can report the steps as correct.
                                 ''',
@@ -152,7 +162,7 @@ class TestStepAgent(PipelineStepAgent):
         print(turn1_response)
 
         feedback = ''
-        for record_num in range(start-1, (len(self.input_df) if end < 0 else end)):#len(self.input_df)):
+        for record_num in range(start-1, (len(self.input_df) if end < 0 else min(end, len(self.input_df)))):#len(self.input_df)):
             input_data = self.input_df.iloc[record_num]
             self.generate_model_config.task = self.generate_model_config.task_template.format(target_scenario = str(input_data["target_scenario"]),
                                                                                               test_case_id = str(input_data["test_case_id"]), 
@@ -166,7 +176,13 @@ class TestStepAgent(PipelineStepAgent):
                 generated_response = self.generate_content(prompt, self.generate_model_config.output_format)
                 output_df = pd.DataFrame(generated_response['output'])
                 if verify:
-                    self.verify_model_config.task = self.verify_model_config.task_template.format(test_steps = str(output_df))
+                    self.verify_model_config.task = self.verify_model_config.task_template.format(target_scenario = str(input_data["target_scenario"]),
+                                                                                              test_case_id = str(input_data["test_case_id"]), 
+                                                                                              given = str(input_data["given"]) + '\n' + str(input_data["given_steps"]),
+                                                                                              when = str(input_data["when"]) + '\n' + str(input_data["when_steps"]),
+                                                                                              then = str(input_data["then"]),
+                                                                                              memberCode = str(input_data['memberCode']),
+                                                                                              test_steps = str(output_df))
                     prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task
                     verify_response = self.verify_content(prompt, self.verify_model_config.output_format)
                     if verify_response['isCorrect']:
