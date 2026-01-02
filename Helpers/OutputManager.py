@@ -77,6 +77,8 @@ class ExcelManager:
         rows = data[1:]
         
         df = pd.DataFrame(rows, columns=headers)
+
+        df.dropna(axis=1, how='all', inplace=True)
         
         # Sort by step number (assuming column is named 'step' or 'Step')
         if 'step' in df.columns:

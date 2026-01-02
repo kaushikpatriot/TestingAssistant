@@ -247,12 +247,12 @@ class ExpectedResultLine(BaseModel):
     allocated: float = Field(
         description="""
         This is filled using the 'allocationDetails' in the test steps and every line is allocated individually
-        to the relevant line item, provided it is fully satisfies the requirement.
+        to the relevant line item, provided it fully satisfies the requirement.
         This amount is filled with the requested allocation provided the requested allocation amount
         is less than the unallocated amount at the time of allocation. No partial allocation is done.
         If allocation succeeds, this is the total allocation requested. This amount will reduce the 
         unallocated amount.
-        The order of priority while allocating should be taken note of. 
+        **The order of priority while allocating should be taken note of**. 
         """
     )
 
@@ -308,15 +308,20 @@ class TestOutputAgent(PipelineStepAgent):
     generate_model_config = ModelConfig(
                         test_module = '',
                         knowledge_base_path='',
-                        role = '''You are senior financial application tester who can write test steps required to the execute the test case given the requirements and the test case ''',
-                        task_template = '',
-                        task = '''
-                                You required to carefully understand the requirements and the Test Case provided as **Input** and do the following
-                                1. Create the necessary and relevant test steps required to effectively test the given test case. 
-                                2. Keep each test step comprehensive and independent to test effectively
-                                3. **DO NOT** generate steps for any other Test cases other than the Test case provided as **Input**
+                        role = '''You are senior financial application tester who can write the expected output for a given set of test steps for a test case ''',
+                        task_template = '''
+                                You are required to carefully understand the requirements, the Test Case and the Test steps given below and do the following
+                                Here is the {test_case}
+                                "For the given state {current_state} and the given step - {step} and the allocation step - {allocation_steps} - 
+                                Can you generate the expected output in the Collateral summary along with the reasoning for the output for Step {step_number} 
+                                based on the Blocking Logic and the allocation logic provided. 
+                                Note: Rows with keys of   step, memberCode,segment_group,segment,purpose_of_deposit,collateral_group, collateral_component,is_fungible,currency 
+                                will be aggregated and there will only be one row for a combination of these field. The MLN, Compliance requirements and Capital Cushion requirements are available in the Masters data. 
+                                Use those for the calculation. Ensure after the Blocking is done, Allocation is done based on the requested allocation amounts at the individual CM, TM, UCC or CP levels as applicable"
+                                Here is the feedback from the verifier if applicable: {feedback}. Consider this too when generating the output
                                 3. List them in the format required
-                                ''' ,
+                                ''',
+                        task = '' ,
                         output_format = ExpectedResult,
                         provider = 'gemini',
                         model = 'gemini-2.5-pro' #'deepseek-r1:14b' #'qwen-coder:30b'#
@@ -326,11 +331,15 @@ class TestOutputAgent(PipelineStepAgent):
                         test_module = '',
                         knowledge_base_path='',
                         role = '''You are an expert test case verifier for financial application. You understand the nuances of requirements provided''',
-                        task_template = '',
-                        task = '''
-                                You required to carefully understand the requirements, the Test case provided and the Test steps is attached
-                                1. Verify the input given and provide a score of the correctness of the input.
-                                '''  ,
+                        task_template = '''
+                                For the given Test Case: {test_case},  previous state: {previous_state}, current state {current_state} and the given {step} and {allocation_steps} - 
+                                Can you verify if the current state is correctly computed as per the Blocking rules and the allocation rules given from the previous state and the step taken? 
+                                Ensure allocation is also done correctly after the blocking is done. 
+                                Ensure the Allocated amount is equal to the total allocation that is permissible from the requested allocation details. 
+                                Note: Rows with keys of   step, memberCode,segment_group,segment,purpose_of_deposit,collateral_group, collateral_component,is_fungible,currency will be aggregated and there will only be one row for a combination of these fields. 
+                                If the output is incorrect record the reasons.
+                                ''',
+                        task =  '' ,
                         output_format = TestOutputVerification,
                         provider = 'gemini',
                         model = 'gemini-2.5-pro'
@@ -342,70 +351,126 @@ class TestOutputAgent(PipelineStepAgent):
         self.verify_model_config.test_module = test_module
         self.verify_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
         self.excel_handler = ExcelManager(mode = 'modify', filepath = os.getenv('TEST_DATA_FILE'))
-
+        self.generate_llm_client = LLMClient(self.generate_model_config.provider, self.generate_model_config.model, self.generate_model_config.knowledge_base_path, test_module) #**self.generate_model_config.model_dump())
+        self.verify_llm_client = LLMClient(self.verify_model_config.provider, self.verify_model_config.model, self.verify_model_config.knowledge_base_path, test_module) #**self.verify_model_config.model_dump())
+        self.inCorrectSheetList = []
 
     def load_input_data(self, sheetName):
+        test_cases_df = pd.read_csv(os.getenv('TEST_CASES_FILE'))
+        test_case_for_id = test_cases_df[test_cases_df['test_case_id'] == sheetName]
         test_step_end_row, steps_df = self.excel_handler.excelToDfConverter(sheetName, "##Test Steps - Start", "##Test Steps - End")
         allocation_end_row, allocation_df = self.excel_handler.excelToDfConverter(sheetName, "##allocation Steps - Start", "##allocation Steps - End")
         end_row = allocation_end_row if allocation_end_row else test_step_end_row
-        return end_row, steps_df, allocation_df
+        return test_case_for_id, end_row, steps_df, allocation_df
 
     def load_knowledge_base(self):
-        llm_client = LLMClient(**self.generate_model_config.model_dump())
-        llm_client.upload_files()
+        self.generate_llm_client.upload_files()
 
-    def generate_content(self, input):
-        llm_client = LLMClient(**self.generate_model_config.model_dump())
-        return llm_client.generate_content(input)
+    def generate_content(self, prompt, response_schema = None):
+        return self.generate_llm_client.generate_content(prompt, response_schema)
     
-    def verify_content(self, output):
-        llm_client = LLMClient(**self.verify_model_config.model_dump())
-        return llm_client.generate_content(input = output)
+    def verify_content(self, prompt, response_schema = None):
+        return self.verify_llm_client.generate_content(prompt, response_schema)
     
-    def execute(self, sheets, verify = True, tries = 1, startMarker = '##Expected Output - Start', endMarker = '##Expected Output - End'):
+    def execute(self, sheets, verify = True, tries = 3, startMarker = '##Expected Output - Start', endMarker = '##Expected Output - End'):
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
 
-        #For each sheet
-        for sheetName in self.excel_handler.sheetnames:
-            if (sheets is None) or (sheets is not None and sheetName in sheets):
-                # Delete the range from Excel
-                self.excel_handler.deleteRange(sheetName, startMarker, endMarker)
-                # Convert to Dataframe
-                current_state = {}
-                output_df = pd.DataFrame()
-                end_row, steps_df, allocation_df = self.load_input_data(sheetName)
-                # Generate output given the current state and the transaction
-                step_count, current_state = len(steps_df), {}
-                for step in range(1, step_count+1):
-                    actual_step = steps_df[steps_df['step'] == step ]
-                    input_data = {'current_state': current_state, 'transaction_step': actual_step}
-                    if len(allocation_df) > 0:
-                        allocation_step = allocation_df[allocation_df['step'] == step]
-                        input_data['allocation_step']= allocation_step
-                    
-                    #Generate output
-                    print(f"\nExpected Output being generated for {sheetName}")
-                    for i in range(tries):
-                        generated_response = self.generate_content(input_data)
-                        input_data['expected_output'] = generated_response['output']
-                        if verify:
-                            verify_response = self.verify_content(input_data)
-                            if verify_response['correctness'] == True:
-                                break
+        knowledge_files = os.listdir(self.generate_model_config.knowledge_base_path)
+        gen_prompt = f'''I have uploaded the following documents. You required to carefully understand the requirements, processing rules, static data, masters that have already been uploaded. 
+        Can you confirm if you have the following documents in your cache?
+        {str(knowledge_files)}
+        '''
+        turn1_response = self.generate_content(gen_prompt)
+        print(turn1_response)
 
-                    #State update for next iteration
+        sheetNames = sheets if sheets else self.excel_handler.sheetnames #specific sheets if given as input, if not all sheets
+        #For each sheet
+        for sheetName in sheetNames:
+
+            # if (sheets is None) or (sheets is not None and sheetName in sheets):
+            # Correct Output indicator
+            isOutputCorrect = False
+            # Delete the range from Excel
+            self.excel_handler.deleteRange(sheetName, startMarker, endMarker)
+            # Convert to Dataframe
+            output_df = pd.DataFrame()
+            test_case, end_row, steps_df, allocation_df = self.load_input_data(sheetName)
+            # Generate output given the current state and the transaction
+            step_count, current_state, previous_state = len(steps_df), {}, {}
+
+            gen_prompt = f'''No focus on this specific Test Case sheet. Here ae the details of the test case
+            {test_case}.
+            Here are the {steps_df} and the {allocation_df}
+            **DO NOT use details of any other test case other than the one given here**
+            Can you confirm if you have understood the test case?
+            '''
+            turn1_response = self.generate_content(gen_prompt)
+            print(turn1_response)
+
+
+            for step in range(1, step_count+1):
+                feedback = ''
+                actual_step = steps_df[steps_df['step'] == step ]
+                if len(allocation_df) > 0:
+                    allocation_steps = allocation_df[allocation_df['step'] == step]
+                    if len(allocation_steps) > 0:
+                        allocation_steps_json = allocation_steps.to_json()
+                    else:
+                        allocation_steps_json = ''
+                
+                step_number = str(actual_step['step'].item()),
+                #Format Prompt
+                self.generate_model_config.task = self.generate_model_config.task_template.format(test_case = test_case.to_json(),
+                                                                                                    step = actual_step.to_json(),
+                                                                                                    allocation_steps = allocation_steps_json,
+                                                                                                    step_number = str(step_number),
+                                                                                                    current_state = str(current_state), 
+                                                                                                    feedback = feedback
+                                                                                                    )
+                prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task
+                # print(f'here is the {prompt} for {step_number}')
+                #Generate output
+                print(f"\nExpected Output being generated for {sheetName} - {step_number}")
+                for i in range(tries):
+                    generated_response = self.generate_content(prompt,self.generate_model_config.output_format)
                     current_state = generated_response['output']
+                    # print(f'This is the current_state after Step {step_number} - {current_state}')
+                    if verify:
+                        print(f"\nVerifying Expected Output being generated for {sheetName} - {step_number}")
+                        self.verify_model_config.task = self.verify_model_config.task_template.format(test_case = test_case.to_json(),
+                                                                                                        previous_state = str(previous_state),
+                                                                                                        current_state = str(current_state),
+                                                                                                        step = actual_step.to_json(),
+                                                                                                        allocation_steps = allocation_steps_json
+                                                                                                        )
+                        prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task
+                        verify_response = self.verify_content(prompt, self.verify_model_config.output_format)
+                        feedback = verify_response['correction']
+                        if verify_response['correctness'] == True:
+                            previous_state = current_state
+                            break
+
+                #State update for next iteration
+                if verify_response['correctness'] == True:
+                    isOutputCorrect = True
                     if output_df.empty:
                         output_df = pd.DataFrame(generated_response['output'])
                     else:
                         output_df = pd.concat([output_df, pd.DataFrame(generated_response['output'])], ignore_index=True)
-                    
-                # Write the output to the sheet
+                else:
+                    print(f'Unable to generate correct expected output for {sheetName}. Reason: {feedback}')
+                    self.inCorrectSheetList.append(sheetName)
+                    isOutputCorrect = False
+                    break               
+
+            # Write the output to the sheet
+            if isOutputCorrect:
                 curr_row = self.excel_handler.writeDfToSheet(sheetName = sheetName, dfToWrite=output_df,
                                     startRow=end_row+2, startMarker="##Expected Output - Start", endMarker="##Expected Output - End")
 
                 # Save the workbook
                 self.excel_handler.save_wb()
+        print(f'Here are the list of sheets for which correct output could not be produced: {self.inCorrectSheetList}')
         
 
