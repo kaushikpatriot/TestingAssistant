@@ -4,6 +4,9 @@ import os
 import requests
 from datetime import datetime
 import json
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+from google.genai.errors import ClientError
+
 
 class LLMConnector:
     def __init__(self, provider="ollama", model="gpt-oss:20b", knowledge_base_path="", test_module = "General Knowledge"):
@@ -197,7 +200,11 @@ class LLMConnector:
         return response.json()    
     
 # -----------------------------------Gemini helper functions-------------------------------------------
-
+    @retry(
+    wait=wait_exponential(multiplier=1, min=4, max=30),
+    stop=stop_after_attempt(10),
+    retry=retry_if_exception_type(ClientError)
+    )
     def _chat_gemini(self, prompt, response_schema = None):
         self._load_cache_gemini()
 

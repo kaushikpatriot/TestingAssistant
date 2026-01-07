@@ -37,7 +37,9 @@ class TestCaseStep(BaseModel):
                                   Use the segment code available in static data such as CM, FNO etc
                                   E.g CM, FNO etc''')
   addReduce: str = Field(description="Whether collateral is being added or reduced")
-  collateralType: str = Field(description = "This is the code pertaining to the type of collateral.  Use only those **Code** values that are defined under Tag ID = 14 in the rd_tag_value in static data as applicable for the test case")
+  collateralType: str = Field(description = '''This is the code pertaining to the type of collateral.  
+                              Use only those **Code** values that are defined under Tag ID = 14 in the rd_tag_value in static data as applicable for the test case
+                              For **Allocation** event always set this field to CASH''')
   event: str = Field(description = "The type of transaction e.g Deposit, Withdraw, Invoke, Transfer, Renew, Allocation etc. Use suitable event in the same format as given here.")
   collateralGroup: str = Field(description = '''The collateral group to which this collateral type belongs to.
                                               Use the code as available in the static data''')
@@ -53,15 +55,16 @@ class TestCaseStep(BaseModel):
   amountInWords: str = Field(description = "The amount in words for the amount of the transaction")
   bank: str = Field(description='Always set to IDFC. This is applicable for Cash, Fixed Deposit and Bank Guarantees')
   account: str = Field(description='Pick up the suitable bank account from the Masters data (Member Bank Account) based on the MemberCode chosen')
-  instrumentNo: int = Field(description='''Random 6 digit number for Fixed Deposit and Bank Guarantee. Keep it empty for Cash
-                                        Where the event is renewal, this is the old / existing instrument number''')
+  instrumentNo: int = Field(description='''Random 6 digit number for Fixed Deposit and Bank Guarantee. Keep this unique across test cases and test steps.
+                            Keep it empty for Cash. Where the event is renewal, this is the old / existing instrument number''')
   branch: str = Field(description="Applied only to Fixed deposit and Bank Guarantee  transactions. Random city in India. Keept it empty for Cash")
   isElectronic: str = Field(description="Applied only to Fixed deposit and Bank Guarantee  transactions. Set to False always")
   quantity: int = Field(description="Applied only Securities include G-Secs. 0 for others")
   isin: str = Field(description = "Applied only to Securities inclding G-Secs. Empty for others. This will be picked up from the master data provided")
   price: float = Field(description="Applied only to Securities inclding G-Secs. 0 for others. This will be picked up from the master data provided")
   value: float = Field(description="Applied only to Securities inclding G-Secs. 0 for others. This is quantity * price. This is the value used for blocking")
-  newInstrumentNo: int = Field(description='''This applies only if the event is **Renewal**. Random 6 digit number for Fixed Deposit and Bank Guarantee. Keep it empty for Cash''')
+  newInstrumentNo: int = Field(description='''This applies only if the event is **Renewal**. Random 6 digit number for Fixed Deposit and Bank Guarantee. 
+                               Keep this unique across test cases and test steps. Keep it empty for Cash''')
   toSegment: str = Field(description='''Segment to which the collateral is being transferred. This is applicable only if the event is transfer
                                   Use the segment code available in static data such as CM, FNO etc
                                   E.g CM, FNO etc **THIS DOES NOT APPLY TO TRANSFER OF ALLOCATION''')  
@@ -191,6 +194,12 @@ class TestStepAgent(PipelineStepAgent):
                         feedback = verify_response['correction']
             if verify_response['isCorrect']:
                 self.excel_handler.createWorksheet(sheetName=input_data['test_case_id'])
+                objectToWrite = {'Test Case ID': (1,1),
+                                 str(input_data['test_case_id']): (1,2),
+                                 'Test Case description': (2,1),
+                                 str(input_data['target_scenario']): (2,2)
+                                 }
+                self.excel_handler.writeTextToSheet(input_data['test_case_id'],objectToWrite)
                 #Identify columns that have lists as its value. They will be written out separately on Excel
                 list_cols = [
                             c for c in output_df.columns
@@ -198,7 +207,7 @@ class TestStepAgent(PipelineStepAgent):
                     ]
                 # print(f'Writing Test Steps to File for {record_num+1}')
                 curr_row = self.excel_handler.writeDfToSheet(sheetName = input_data['test_case_id'], dfToWrite=output_df.drop(columns=list_cols),
-                                                startRow=1, startMarker="##Test Steps - Start", endMarker="##Test Steps - End")
+                                                startRow=4, startMarker="##Test Steps - Start", endMarker="##Test Steps - End")
                 print(f'Written Test Steps to File for {record_num+1}')
                 #Writing Sub steps in a separate set of rows. E.g. Allocation Steps
                 # print(f'Writing Allocation Steps to File for {record_num+1}')

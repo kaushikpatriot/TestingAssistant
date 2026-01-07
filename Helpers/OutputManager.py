@@ -18,6 +18,12 @@ class ExcelManager:
     def createWorksheet(self, sheetName):
         self.wb.create_sheet(sheetName)
 
+    def writeTextToSheet(self, sheetName, objToWrite):
+        ws = self.wb[sheetName]
+        for key, value in objToWrite.items():
+            cell = ws.cell(row = value[0], column = value[1], value = key)
+            cell.font = Font(bold = True)
+
     def writeDfToSheet(self, sheetName, dfToWrite, startRow, startMarker, endMarker):
         ws = self.wb[sheetName]
         curr_row = startRow
