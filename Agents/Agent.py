@@ -11,19 +11,22 @@ class LLMClient:
     '''
     This class acts as a common Client to connect with LLMs using LLMConnector for perform content generation or upload of files
     '''
-    def __init__(self, provider, model, knowledge_base_path, test_module):
+    def __init__(self, provider, model, knowledge_base_path, test_module, role='generator'):
         # print(provider, model)
-        self.llm_connector = LLMConnector(provider, model, knowledge_base_path, test_module)
+        self.llm_connector = LLMConnector(provider, model, knowledge_base_path, test_module, role)
 
     def upload_files(self):
         self.llm_connector.upload_files()
 
-    def generate_content(self, prompt, response_schema=None):
-        response = self.llm_connector.chat(prompt, response_schema)
+    def generate_content(self, prompt, response_schema=None, session = 'new'):
+        response = self.llm_connector.chat(prompt, response_schema, session)
         if response_schema:
             return json.loads(response)
         else:
             return response        
+    
+    def cleanup_files(self):
+        self.llm_connector.cleanup_files()
 
 
 class ModelConfig(BaseModel):
@@ -56,7 +59,11 @@ class PipelineStepAgent(ABC):
         pass
 
     @abstractmethod
-    def load_knowledge_base(self):
+    def load_generator_knowledge_base(self):
+        pass
+
+    @abstractmethod
+    def load_generator_knowledge_base(self):
         pass
 
     @abstractmethod

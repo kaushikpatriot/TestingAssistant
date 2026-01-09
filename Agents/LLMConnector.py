@@ -9,27 +9,32 @@ from google.genai.errors import ClientError
 
 
 class LLMConnector:
-    def __init__(self, provider="ollama", model="gpt-oss:20b", knowledge_base_path="", test_module = "General Knowledge"):
+    def __init__(self, provider="ollama", model="gpt-oss:20b", knowledge_base_path="", test_module = "General Knowledge", role = 'generator'):
         if provider == "ollama":
             self.ollama_url = os.getenv('OLLAMA_BASE_URL')
             self.ollama_api_key= os.getenv('OLLAMA_API_KEY')
             self.ollama_knowledge_id = self._find_or_create_knowledge(test_module) 
         elif provider == "gemini":
-            self.gemini_api_key = os.getenv('GOOGLE_API_KEY')
-            self.gemini_client = genai.Client(api_key = self.gemini_api_key)
+            if role == 'generator':
+                self.gemini_api_key = os.getenv('GOOGLE_API_KEY_GEN')
+                self.gemini_client = genai.Client(api_key = self.gemini_api_key)
+            else:
+                self.gemini_api_key = os.getenv('GOOGLE_API_KEY_VER')
+                self.gemini_client = genai.Client(api_key = self.gemini_api_key)
+            self.cache_directory = f'{role}_cache'
         else:
             raise Exception('Invalid provider: {provider}')
         self.chat_session = None
         self.provider, self.model, self.knowledge_base_path = provider, model, knowledge_base_path
 
 #---------------------------------------Main Chat and file management functions-------------------------
-    def chat(self, prompt, response_schema):
+    def chat(self, prompt, response_schema, session = 'new'):
         if self.provider == 'ollama':
             self.files = [os.path.join(self.knowledge_base_path, f) for f in os.listdir(self.knowledge_base_path) 
                 if os.path.isfile(os.path.join(self.knowledge_base_path, f))]
             response = self._chat_ollama(prompt, response_schema)
         elif self.provider == 'gemini':
-            response = self._chat_gemini(prompt, response_schema)
+            response = self._chat_gemini(prompt, response_schema, session)
         else:
             raise Exception(f"{self.provider} is an invalid provider. It can only be ollama or gemini")
         return response
@@ -205,7 +210,7 @@ class LLMConnector:
     stop=stop_after_attempt(10),
     retry=retry_if_exception_type(ClientError)
     )
-    def _chat_gemini(self, prompt, response_schema = None):
+    def _chat_gemini(self, prompt, response_schema = None, session = 'new'):
         self._load_cache_gemini()
 
         turn_config = None
@@ -216,7 +221,7 @@ class LLMConnector:
                 response_schema=response_schema
             )
 
-        if not self.chat_session:
+        if not self.chat_session or session == 'new':
             self.chat_session = self.gemini_client.chats.create(
                 model=self.model
             )
@@ -225,7 +230,7 @@ class LLMConnector:
         return response.text
     
 
-    def _upload_files_gemini(self, files):
+    def _upload_files_gemini(self, files, role = 'generator'):
         try:
             self._load_cache_gemini()
             #Extending the cache time 
@@ -275,15 +280,17 @@ class LLMConnector:
             'ttl': '1800s'
         }
 
-        with open('Cache/cache_info.json', 'w') as f:
+        os.makedirs(self.cache_directory, exist_ok=True)
+
+        with open(f'{self.cache_directory}/cache_info.json', 'w') as f:
             json.dump(cache_info, f)
         
         file_metadata = [{'name': f.name, 'display_name': f.display_name} 
                  for f in self.uploaded_files]
-        json.dump(file_metadata, open('Cache/uploaded_files.json', 'w'))
+        json.dump(file_metadata, open(f'{self.cache_directory}/uploaded_files.json', 'w'))
 
     def _load_cache_gemini(self):
-        with open('Cache/cache_info.json', 'r') as f:
+        with open(f'{self.cache_directory}/cache_info.json', 'r') as f:
             cache_info = json.load(f)
         self.cache = self.gemini_client.caches.get(name=cache_info['cache_name'])
 
@@ -291,15 +298,15 @@ class LLMConnector:
         # 8. Clean up (Important for cost management)
         try:
             self._load_cache_gemini()
-            file_metadata = json.load(open('Cache/uploaded_files.json', 'r'))
+            file_metadata = json.load(open(f'{self.cache_directory}/uploaded_files.json', 'r'))
             self.gemini_client.caches.delete(name=self.cache.name)
             for file_info in file_metadata:
                 self.gemini_client.files.delete(name=file_info['name'])
         except Exception as e:
             print(e)
         finally:
-            os.remove('Cache/uploaded_files.json')
-            os.remove('Cache/cache_info.json')
+            os.remove(f'{self.cache_directory}/uploaded_files.json')
+            os.remove(f'{self.cache_directory}/cache_info.json')
             print("\nClean-up complete. Cache and individual files deleted.")
    
 #------------------------------General helper functions-------------------------

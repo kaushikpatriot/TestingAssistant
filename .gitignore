@@ -5,3 +5,5 @@ KnowledgeBase/*
 Datamodels/*
 __pycache__
 Output/*
+generator_cache/
+verifier_cache/

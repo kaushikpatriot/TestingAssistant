@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 import pandas as pd
 import os
 from Helpers.OutputManager import ExcelManager
+import time
+import sys
 
 class AllocationDetails(BaseModel):
   step: int = Field(description="This is the same step number as the test case step in which allocation data is generated")
@@ -15,7 +17,7 @@ class AllocationDetails(BaseModel):
   cpCode: str = Field(description="This is the custodial participant code")
   cliCode: str = Field(description="This is the client code")
   txn_type: str = Field(description = "This can have only 4 possible values. Allocate, De-allocate and Transfer In and Transfer Out")
-  amt: float = Field(description="This is the amount of the transaction. Allocation and Transfer In are a positive amounts, De-allocation and Transfer Out will be negative.")
+  amt: float = Field(description="This is the amount of the transaction. *Allocation and Transfer In are a positive amounts, De-allocation and Transfer Out will be negative.*")
   cum_amt: float = Field(description='''This is the cumulative allocation outstanding after the transaction is performed.
                          Irrespective of whether the request PASS or FAIL, cum_amt is filled as that will be the actual request made''')
   exp_amt: float = Field(description='''This is the expected amount of outstanding allocation after the request is sucessfully processed. It is the same as cum_amt if the transaction *PASS*es. 
@@ -40,7 +42,9 @@ class TestCaseStep(BaseModel):
   collateralType: str = Field(description = '''This is the code pertaining to the type of collateral.  
                               Use only those **Code** values that are defined under Tag ID = 14 in the rd_tag_value in static data as applicable for the test case
                               For **Allocation** event always set this field to CASH''')
-  event: str = Field(description = "The type of transaction e.g Deposit, Withdraw, Invoke, Transfer, Renew, Allocation etc. Use suitable event in the same format as given here.")
+  event: str = Field(description = '''The type of transaction e.g Deposit, Withdraw, Invoke, Transfer, Renew, Allocation etc. 
+                     Use suitable event in the same format as given here.
+                     **For Allocation, De-allocation and Transfer, keep the event as Allocation only**''')
   collateralGroup: str = Field(description = '''The collateral group to which this collateral type belongs to.
                                               Use the code as available in the static data''')
   collateralComponent: str = Field(description ='''The collateral component to which this collateral type belongs to.
@@ -78,8 +82,8 @@ class TestCaseSteps(BaseModel):
   output: list[TestCaseStep]
 
 class TestStepVerification(BaseModel):
-    isCorrect: bool = Field(description = 'Reports True if the output is correct, False if wrong')
-    correction: str = Field(description = 'Describe what needs correction')
+    correctness: bool = Field(default=True, description="Is the output correct?")
+    correction: str = Field(default="", description="What needs correction")
 
 class TestStepAgent(PipelineStepAgent):
     generate_model_config = ModelConfig(
@@ -94,12 +98,11 @@ class TestStepAgent(PipelineStepAgent):
                                 {when}
                                 {then} 
                                 {memberCode}
-                                and also consider the verifier's feedback {feedback} if available
                                 and do the following
                                 1. Create the necessary and relevant test steps required to effectively test the given test case. 
                                 2. Keep each test step comprehensive and independent to test effectively
                                 3. **DO NOT** generate steps for any other Test cases other than the Test case provided as **Input**
-                                3. List them in the format required
+                                4. Consider verifier's feed back if available
                                 ''',
                         task = '' ,
                         output_format = TestCaseSteps,
@@ -122,7 +125,10 @@ class TestStepAgent(PipelineStepAgent):
                                 You required to carefully understand the requirements and the test case provided. 
                                 Here are the Test steps generated. 
                                 {test_steps}
-                                1. Verify the output primarily the steps, collateral types used and the amounts. If these are correct, you can report the steps as correct.
+                                1. The Test case including given when then are already verified
+                                2. What you need to verify now is whether the test steps generated correspond to the steps 
+                                    laid out in the given and when steps. 
+                                3. If the steps correspond to the given when steps, then the output is Correct. If not, it is incorrect
                                 ''',
                         task =  '',
                         output_format = TestStepVerification,
@@ -136,14 +142,17 @@ class TestStepAgent(PipelineStepAgent):
         self.verify_model_config.test_module = test_module
         self.verify_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
         self.excel_handler = ExcelManager(mode = 'new', filepath = os.getenv('TEST_DATA_FILE'))
-        self.generate_llm_client = LLMClient(self.generate_model_config.provider, self.generate_model_config.model, self.generate_model_config.knowledge_base_path, test_module) #**self.generate_model_config.model_dump())
-        self.verify_llm_client = LLMClient(self.verify_model_config.provider, self.verify_model_config.model, self.verify_model_config.knowledge_base_path, test_module) #**self.verify_model_config.model_dump())
+        self.generate_llm_client = LLMClient(self.generate_model_config.provider, self.generate_model_config.model, self.generate_model_config.knowledge_base_path, test_module, 'generator') #**self.generate_model_config.model_dump())
+        self.verify_llm_client = LLMClient(self.verify_model_config.provider, self.verify_model_config.model, self.verify_model_config.knowledge_base_path, test_module, 'verifier') #**self.verify_model_config.model_dump())
 
     def load_input_data(self):
         self.input_df = pd.read_csv(f"{os.getenv('TEST_CASES_FILE')}")
 
-    def load_knowledge_base(self):
+    def load_generator_knowledge_base(self):
         self.generate_llm_client.upload_files()
+
+    def load_verifier_knowledge_base(self):
+        self.verify_llm_client.upload_files()
 
     def generate_content(self, prompt, response_schema=None):
         return self.generate_llm_client.generate_content(prompt, response_schema)
@@ -151,9 +160,12 @@ class TestStepAgent(PipelineStepAgent):
     def verify_content(self, prompt, response_schema=None):
         return self.verify_llm_client.generate_content(prompt, response_schema)
     
-    def execute(self, start=1, end=-1, verify = True, tries = 3):
+    def execute(self, start=1, end=-1, verify = True, tries = 2, cleanup = True):
         if self.generate_model_config.provider == 'gemini':
-            self.load_knowledge_base()
+            self.load_generator_knowledge_base()
+
+        if self.verify_model_config.provider == 'gemini':
+            self.load_verifier_knowledge_base()
 
         self.load_input_data()
         knowledge_files = os.listdir(self.generate_model_config.knowledge_base_path)
@@ -162,7 +174,14 @@ class TestStepAgent(PipelineStepAgent):
         {str(knowledge_files)}
         '''
         turn1_response = self.generate_content(gen_prompt)
-        print(turn1_response)
+        print(f'Generator: {turn1_response}')
+
+        gen_prompt = f'''I have uploaded the following documents. You required to carefully understand the requirements, processing rules, static data, masters that have already been uploaded. 
+        Can you confirm if you have the following documents in your cache?
+        {str(knowledge_files)}
+        '''
+        turn1_response = self.verify_content(gen_prompt)
+        print(f'Verifier: {turn1_response}')
 
         feedback = ''
         for record_num in range(start-1, (len(self.input_df) if end < 0 else min(end, len(self.input_df)))):#len(self.input_df)):
@@ -172,27 +191,34 @@ class TestStepAgent(PipelineStepAgent):
                                                                                               given = str(input_data["given"]) + '\n' + str(input_data["given_steps"]),
                                                                                               when = str(input_data["when"]) + '\n' + str(input_data["when_steps"]),
                                                                                               then = str(input_data["then"]),
-                                                                                              memberCode = str(input_data['memberCode']),
-                                                                                              feedback = feedback)
-            prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task
+                                                                                              memberCode = str(input_data['memberCode'])
+                                                                                             )
             for i in range(tries):
+                prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task
                 generated_response = self.generate_content(prompt, self.generate_model_config.output_format)
                 output_df = pd.DataFrame(generated_response['output'])
+                output_df_json = output_df.to_json()
                 if verify:
+                    time.sleep(2)
                     self.verify_model_config.task = self.verify_model_config.task_template.format(target_scenario = str(input_data["target_scenario"]),
                                                                                               test_case_id = str(input_data["test_case_id"]), 
                                                                                               given = str(input_data["given"]) + '\n' + str(input_data["given_steps"]),
                                                                                               when = str(input_data["when"]) + '\n' + str(input_data["when_steps"]),
                                                                                               then = str(input_data["then"]),
                                                                                               memberCode = str(input_data['memberCode']),
-                                                                                              test_steps = str(output_df))
-                    prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task
+                                                                                              test_steps = str(output_df_json))
+                    prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task + f'\nVerifier feedback:{feedback}' #if feedback != '' else ''
                     verify_response = self.verify_content(prompt, self.verify_model_config.output_format)
-                    if verify_response['isCorrect']:
+
+                    if verify_response['correctness']:
+                        print(verify_response)
                         break
                     else:
                         feedback = verify_response['correction']
-            if verify_response['isCorrect']:
+                else:
+                    break
+
+            if not verify or verify_response['correctness']:
                 self.excel_handler.createWorksheet(sheetName=input_data['test_case_id'])
                 objectToWrite = {'Test Case ID': (1,1),
                                  str(input_data['test_case_id']): (1,2),
@@ -222,3 +248,8 @@ class TestStepAgent(PipelineStepAgent):
                 self.excel_handler.save_wb()
             else:
                 print(f"Unable to generate test steps correctly for {input_data['test_case_id']} because of {feedback}")
+        
+        #Clean up uploaded files and delete cache
+        if cleanup:
+            self.generate_llm_client.cleanup_files()
+            self.verify_llm_client.cleanup_files()

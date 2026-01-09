@@ -34,7 +34,7 @@ def generateTestSteps(start, end):
 
 def generateTestOutput(sheets=None):
     print(f'Generating Test Output \n')
-    test_ot_agent = TestOutputAgent("Cash Allocation")
+    test_ot_agent = TestOutputAgent(test_module="Cash Allocation")
     test_ot_agent.execute(sheets=sheets)
 
 

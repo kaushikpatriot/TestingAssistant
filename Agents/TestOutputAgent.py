@@ -5,6 +5,7 @@ import pandas as pd
 import os
 from Helpers.OutputManager import ExcelManager
 import json
+import sys
 
 class ExpectedResultLine(BaseModel):
     """
@@ -301,8 +302,8 @@ class ExpectedResult(BaseModel):
   reason: str = Field(description="Description reason for why this is the expected result")
 
 class TestOutputVerification(BaseModel):
-  correctness: bool = Field(description = "Indicates if the output is correct or not")
-  correction: str = Field(description="If incorrect, explain what is wrong. Keep it empty if the result is correct")
+    correctness: bool = Field(default=True, description="Is the output correct?")
+    correction: str = Field(default="", description="What needs correction")
 
 class TestOutputAgent(PipelineStepAgent):
     generate_model_config = ModelConfig(
@@ -313,12 +314,12 @@ class TestOutputAgent(PipelineStepAgent):
                                 You are required to carefully understand the requirements, the Test Case and the Test steps given below and do the following
                                 Here is the {test_case}
                                 "For the given state {current_state} and the given step - {step} and the allocation step - {allocation_steps} - 
-                                Can you generate the expected output in the Collateral summary along with the reasoning for the output for Step {step_number} 
+                                Can you generate the expected output in the Collateral summary after the specific step is executed along with the reasoning for the output for Step {step_number} 
                                 based on the Blocking Logic and the allocation logic provided. 
                                 Note: Rows with keys of   step, memberCode,segment_group,segment,purpose_of_deposit,collateral_group, collateral_component,is_fungible,currency 
                                 will be aggregated and there will only be one row for a combination of these field. The MLN, Compliance requirements and Capital Cushion requirements are available in the Masters data. 
                                 Use those for the calculation. Ensure after the Blocking is done, Allocation is done based on the requested allocation amounts at the individual CM, TM, UCC or CP levels as applicable"
-                                Here is the feedback from the verifier if applicable: {feedback}. Consider this too when generating the output
+                                Consider Verifier's feedback if available
                                 3. List them in the format required
                                 ''',
                         task = '' ,
@@ -337,6 +338,7 @@ class TestOutputAgent(PipelineStepAgent):
                                 Ensure allocation is also done correctly after the blocking is done. 
                                 Ensure the Allocated amount is equal to the total allocation that is permissible from the requested allocation details. 
                                 Note: Rows with keys of   step, memberCode,segment_group,segment,purpose_of_deposit,collateral_group, collateral_component,is_fungible,currency will be aggregated and there will only be one row for a combination of these fields. 
+                                **Verify only the current state** and you **DO NOT** have to validate the test case, previous state, step or allocation steps
                                 If the output is incorrect record the reasons.
                                 ''',
                         task =  '' ,
@@ -351,8 +353,8 @@ class TestOutputAgent(PipelineStepAgent):
         self.verify_model_config.test_module = test_module
         self.verify_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
         self.excel_handler = ExcelManager(mode = 'modify', filepath = os.getenv('TEST_DATA_FILE'))
-        self.generate_llm_client = LLMClient(self.generate_model_config.provider, self.generate_model_config.model, self.generate_model_config.knowledge_base_path, test_module) #**self.generate_model_config.model_dump())
-        self.verify_llm_client = LLMClient(self.verify_model_config.provider, self.verify_model_config.model, self.verify_model_config.knowledge_base_path, test_module) #**self.verify_model_config.model_dump())
+        self.generate_llm_client = LLMClient(self.generate_model_config.provider, self.generate_model_config.model, self.generate_model_config.knowledge_base_path, test_module, 'generator') #**self.generate_model_config.model_dump())
+        self.verify_llm_client = LLMClient(self.verify_model_config.provider, self.verify_model_config.model, self.verify_model_config.knowledge_base_path, test_module, 'verifier') #**self.verify_model_config.model_dump())
         self.inCorrectSheetList = []
 
     def load_input_data(self, sheetName):
@@ -363,26 +365,40 @@ class TestOutputAgent(PipelineStepAgent):
         end_row = allocation_end_row if allocation_end_row else test_step_end_row
         return test_case_for_id, end_row, steps_df, allocation_df
 
-    def load_knowledge_base(self):
+    def load_generator_knowledge_base(self):
         self.generate_llm_client.upload_files()
 
-    def generate_content(self, prompt, response_schema = None):
-        return self.generate_llm_client.generate_content(prompt, response_schema)
+    def load_verifier_knowledge_base(self):
+        self.verify_llm_client.upload_files()
+
+    def generate_content(self, prompt, response_schema = None, session = 'new'):
+        return self.generate_llm_client.generate_content(prompt, response_schema, session)
     
-    def verify_content(self, prompt, response_schema = None):
-        return self.verify_llm_client.generate_content(prompt, response_schema)
+    def verify_content(self, prompt, response_schema = None, session = 'new'):
+        return self.verify_llm_client.generate_content(prompt, response_schema, session)
     
-    def execute(self, sheets, verify = True, tries = 3, startMarker = '##Expected Output - Start', endMarker = '##Expected Output - End'):
+    def execute(self, sheets, verify = False, tries = 3, startMarker = '##Expected Output - Start', endMarker = '##Expected Output - End', cleanup = True):
         if self.generate_model_config.provider == 'gemini':
-            self.load_knowledge_base()
+            self.load_generator_knowledge_base()
+
+        if verify and self.verify_model_config.provider == 'gemini':
+            self.load_verifier_knowledge_base()
 
         knowledge_files = os.listdir(self.generate_model_config.knowledge_base_path)
         gen_prompt = f'''I have uploaded the following documents. You required to carefully understand the requirements, processing rules, static data, masters that have already been uploaded. 
         Can you confirm if you have the following documents in your cache?
         {str(knowledge_files)}
         '''
-        turn1_response = self.generate_content(gen_prompt)
+        turn1_response = self.generate_content(prompt = gen_prompt, session = 'new')
         print(turn1_response)
+        
+        if verify:
+            gen_prompt = f'''I have uploaded the following documents. You required to carefully understand the requirements, processing rules, static data, masters that have already been uploaded. 
+            Can you confirm if you have the following documents in your cache?
+            {str(knowledge_files)}
+            '''
+            turn1_response = self.verify_content(prompt = gen_prompt, session = 'new')
+            print(turn1_response)
 
         sheetNames = sheets if sheets else self.excel_handler.sheetnames #specific sheets if given as input, if not all sheets
         #For each sheet
@@ -399,15 +415,14 @@ class TestOutputAgent(PipelineStepAgent):
             # Generate output given the current state and the transaction
             step_count, current_state, previous_state = len(steps_df), {}, {}
 
-            gen_prompt = f'''No focus on this specific Test Case sheet. Here ae the details of the test case
+            gen_prompt = f'''Now focus on this specific Test Case sheet. Here are the details of the test case
             {test_case}.
             Here are the {steps_df} and the {allocation_df}
             **DO NOT use details of any other test case other than the one given here**
             Can you confirm if you have understood the test case?
             '''
-            turn1_response = self.generate_content(gen_prompt)
+            turn1_response = self.generate_content(prompt = gen_prompt, session = 'new')
             print(turn1_response)
-
 
             for step in range(1, step_count+1):
                 feedback = ''
@@ -418,21 +433,20 @@ class TestOutputAgent(PipelineStepAgent):
                         allocation_steps_json = allocation_steps.to_json()
                     else:
                         allocation_steps_json = ''
-                
+              
                 step_number = str(actual_step['step'].item()),
                 #Format Prompt
                 self.generate_model_config.task = self.generate_model_config.task_template.format(test_case = test_case.to_json(),
                                                                                                     step = actual_step.to_json(),
                                                                                                     allocation_steps = allocation_steps_json,
-                                                                                                    step_number = str(step_number),
-                                                                                                    current_state = str(current_state), 
-                                                                                                    feedback = feedback
+                                                                                                    step_number = str(step),
+                                                                                                    current_state = str(current_state)
                                                                                                     )
-                prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task
-                # print(f'here is the {prompt} for {step_number}')
                 #Generate output
                 print(f"\nExpected Output being generated for {sheetName} - {step_number}")
                 for i in range(tries):
+                    prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task + f'\n Verifier feedback: {feedback}'
+                    # print(f'here is the {prompt} for {step_number}')
                     generated_response = self.generate_content(prompt,self.generate_model_config.output_format)
                     current_state = generated_response['output']
                     # print(f'This is the current_state after Step {step_number} - {current_state}')
@@ -445,14 +459,16 @@ class TestOutputAgent(PipelineStepAgent):
                                                                                                         allocation_steps = allocation_steps_json
                                                                                                         )
                         prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task
-                        verify_response = self.verify_content(prompt, self.verify_model_config.output_format)
+                        verify_response = self.verify_content(prompt, self.verify_model_config.output_format, session = 'new')
                         feedback = verify_response['correction']
                         if verify_response['correctness'] == True:
                             previous_state = current_state
                             break
+                    else: 
+                        break
 
                 #State update for next iteration
-                if verify_response['correctness'] == True:
+                if not verify or (verify_response['correctness'] == True):
                     isOutputCorrect = True
                     if output_df.empty:
                         output_df = pd.DataFrame(generated_response['output'])
@@ -472,5 +488,10 @@ class TestOutputAgent(PipelineStepAgent):
                 # Save the workbook
                 self.excel_handler.save_wb()
         print(f'Here are the list of sheets for which correct output could not be produced: {self.inCorrectSheetList}')
+
+        #Clean up uploaded files and delete cache
+        if cleanup:
+            self.generate_llm_client.cleanup_files()
+            self.verify_llm_client.cleanup_files()
         
 

@@ -113,7 +113,7 @@ class TestCaseAgent(PipelineStepAgent):
     def verify_content(self, prompt, response_schema=None):
         return self.verify_llm_client.generate_content(prompt, response_schema)
     
-    def execute(self, start = 1, end = -1, gen_instruct = '', verify = True, tries = 3, wait = True):
+    def execute(self, start = 1, end = -1, gen_instruct = '', verify = False, tries = 3, wait = True):
         inCorrectScenarios = []
         if self.generate_model_config.provider == 'gemini':
             self.load_knowledge_base()
@@ -147,7 +147,7 @@ class TestCaseAgent(PipelineStepAgent):
                                                                                               dimensions = str(scenario['scenario_dimension']))    
                 prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task
                 if verify:
-                    time.sleep(2)
+                    # time.sleep(2)
                     print(f'Verifying for the {i+1}th time')
                     verify_response = self.verify_content(prompt,self.verify_model_config.output_format)
                     if verify_response['isCorrect']:
