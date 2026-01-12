@@ -15,6 +15,8 @@ class TestComboSet(BaseModel):
     scenario_id: str = Field(description = 'Unique identifier for the combination. The numbering follows SC-001, SC-002 pattern')
     scenario_description: str = Field (description = 'Comprehensive description of the scenario using the dimensions provided.')
     scenario_dimension: list[TestComboValue] = Field(description= 'The list of combination values of dimensions')
+    member_code: str = Field(description='member code to be used for this scenario')
+
 
 class TestComboList(BaseModel):
     output: list[TestComboSet] = Field(description = 'Consists of all the Test Combination sets. ')
@@ -32,8 +34,8 @@ class TestScenarioAgent(PipelineStepAgent):
                                 You required to carefully understand the requirements and the Test dimensions provided here 
                                 {dimensions}
                              and do the following
-                                1. Create an exhaustive list of dimensions from which test cases can be generated. **DO NOT** miss any valid combinations.
-                                2. Use only the dimensions and the respective values available in the **Input**. **DO NOT** use any other dimensions.
+                                1. Create an exhaustive list of scenarios from which test cases can be generated from the dimensions provided. **DO NOT** miss any valid combinations.
+                                2. Use only the dimensions provided. **DO NOT** use any other dimensions.
                                 3. **DO NOT GENERATE DUPLICATE COMBINATIONS**
                                 4. combine_strategy for each dimension means
                                     a. cartesian - means every value has to be combined with every value from other dimensions to create an exhaustive list
@@ -53,10 +55,16 @@ class TestScenarioAgent(PipelineStepAgent):
                         role = '''You are an expert test case verifier for financial application. You understand the nuances of requirements provided''',
                         task_template='',
                         task = '''
-                                You required to carefully understand the requirements, the Test dimensions provided and the Test combinations is attached
-                                1. Verify the input given and provide a score of the correctness of the input.
+                                You required to carefully understand the requirements, the Test dimensions provided and the Test combinations is attached.
+                                Test Dimensions are given below:
+                                {dimensions}
+                                Test Scenarios generated so far:
+                                {test_scenarios} 
+                                Verify the test scenarios carefully and do the following
+                                1. Provide the corrected scenarios where the scenario is incorrect
+                                2. Provide a list of scenarios that are missed out from the initial set
                                 '''  ,
-                        output_format = TestComboVerification,
+                        output_format = TestComboList,
                         provider = 'gemini',
                         model = 'gemini-2.5-pro'
                         )
@@ -66,8 +74,8 @@ class TestScenarioAgent(PipelineStepAgent):
         self.generate_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
         self.verify_model_config.test_module = test_module
         self.verify_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
-        self.generate_llm_client = LLMClient(self.generate_model_config.provider, self.generate_model_config.model, self.generate_model_config.knowledge_base_path, test_module) #**self.generate_model_config.model_dump())
-        self.verify_llm_client = LLMClient(self.verify_model_config.provider, self.verify_model_config.model, self.verify_model_config.knowledge_base_path, test_module) #**self.verify_model_config.model_dump())
+        self.generate_llm_client = LLMClient(self.generate_model_config.provider, self.generate_model_config.model, self.generate_model_config.knowledge_base_path, test_module,'generator') #**self.generate_model_config.model_dump())
+        self.verify_llm_client = LLMClient(self.verify_model_config.provider, self.verify_model_config.model, self.verify_model_config.knowledge_base_path, test_module,'verifier') #**self.verify_model_config.model_dump())
 
 
     def load_input_data(self):
@@ -76,18 +84,24 @@ class TestScenarioAgent(PipelineStepAgent):
         f.close()
         # self.input_df = pd.read_csv(f"{os.getenv('TEST_DIMENSIONS_FILE')}")         
 
-    def load_knowledge_base(self):
+    def load_generator_knowledge_base(self):
         self.generate_llm_client.upload_files()
+
+    def load_verifier_knowledge_base(self):
+        self.verify_llm_client.upload_files()
 
     def generate_content(self, prompt, response_schema=None):
         return self.generate_llm_client.generate_content(prompt, response_schema)
     
-    def verify_content(self, output):
-        return self.verify_llm_client.generate_content(input = output)
+    def verify_content(self, prompt, response_schema=None):
+        return self.verify_llm_client.generate_content(prompt, response_schema)
     
-    def execute(self, verify = False, tries = 1):
+    def execute(self, verify = True, tries = 1):
         if self.generate_model_config.provider == 'gemini':
-            self.load_knowledge_base()
+            self.load_generator_knowledge_base()
+        
+        if verify and self.verify_model_config.provider == 'gemini':
+            self.load_verifier_knowledge_base()
 
         self.load_input_data()
 
@@ -109,13 +123,20 @@ class TestScenarioAgent(PipelineStepAgent):
             response_df = pd.DataFrame(generated_response['output'])
             # print(f'Number of Scenarios generated in step {step_num+1} is {len(response_df)}')
             if verify:
-                verify_response = self.verify_content(generated_response)
-                if verify_response['overall_score'] >= 70:
-                    break
+                self.verify_model_config.task = self.verify_model_config.task_template.format(dimensions = str(self.dimensions), test_scenarios = str(generated_response['output']))
+                verify_prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task
+                verify_response = self.verify_content(verify_prompt, self.verify_model_config.output_format)
+                if verify_response:
+                    verify_df = pd.DataFrame(verify_response['output'])
+                # if verify_response['overall_score'] >= 70:
+                #     break
         if scenarios_df.empty:
             scenarios_df = response_df
         else:
             scenarios_df = pd.concat([scenarios_df, response_df], ignore_index=True)
+        
+        scenarios_df = pd.concat([scenarios_df, verify_df], ignore_index=True)
+        
         # if len(response_df) < 50: #Maximum of 50 combinations being generated at a time
         #     break
 

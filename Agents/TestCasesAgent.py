@@ -1,3 +1,4 @@
+import json
 from Agents.Agent import PipelineStepAgent, ModelConfig, LLMClient, TextResponse
 from Helpers.KnowledgeBaseProvider import getKnowledgeBasePath
 from pydantic import BaseModel, Field
@@ -39,6 +40,7 @@ class TestCaseAgent(PipelineStepAgent):
                                 {scenario_id}
                                 {scenario}
                                 {dimensions}
+                                {memberCode}
                                 Refer to the test dimensions: {test_dimensions} for an understanding of the meaning of the dimensions
                                 The test cases generated should **STRICTLY** adhere to the criteria defined in this specific Test Scenario.
                                 Refer to the background documents for requirements, but **ignore** those that are not relevant
@@ -50,13 +52,11 @@ class TestCaseAgent(PipelineStepAgent):
                                     Appropriate amounts should be used such that the initial state is achieved in accordance
                                     with the scenario
                                 4. Generate the when steps to effectively test the scenario    
-                                5. Use a different memberCode for each Test Case from the Masters data attached. 
-                                Let the memberCode be successive across Test cases. **DO NOT use a different memberCode when the same Test Case is being re-generated 
-                                due to a verifier feedback. Keep the same memberCode in such cases**
+                                5. Use the memberCode in the scenario
                                 6. Use only those segments available for which MLN requirements are defined in the Masters file. **DO NOT use any other segment
                                 7. Refer to the Static Data file for the list of applicable Collateral Groups, Collateral Components and Collateral Types
                                 {general_instructions}
-                                Refer to the verifier's feedback if available and use it for the output
+                                Refer to the verifier's feedback and the output generated last time, if available and use it for the new output.
                                 ''' ,
                         task = '',
                         output_format = TestCaseList,
@@ -73,6 +73,7 @@ class TestCaseAgent(PipelineStepAgent):
                                 {scenario_id}
                                 {scenario}
                                 {dimensions}
+                                {memberCode}
                                 Please verify the following.
                                 1. Verify if the sequence of steps in {given_steps} is correct or not
                                 2. Verify if the amounts used in the {given_steps} is correct or not
@@ -92,8 +93,8 @@ class TestCaseAgent(PipelineStepAgent):
         self.generate_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
         self.verify_model_config.test_module = test_module
         self.verify_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
-        self.generate_llm_client = LLMClient(self.generate_model_config.provider, self.generate_model_config.model, self.generate_model_config.knowledge_base_path, test_module) #**self.generate_model_config.model_dump())
-        self.verify_llm_client = LLMClient(self.verify_model_config.provider, self.verify_model_config.model, self.verify_model_config.knowledge_base_path, test_module) #**self.verify_model_config.model_dump())
+        self.generate_llm_client = LLMClient(self.generate_model_config.provider, self.generate_model_config.model, self.generate_model_config.knowledge_base_path, test_module, 'generator') #**self.generate_model_config.model_dump())
+        self.verify_llm_client = LLMClient(self.verify_model_config.provider, self.verify_model_config.model, self.verify_model_config.knowledge_base_path, test_module, 'verifier') #**self.verify_model_config.model_dump())
 
 
     def load_input_data(self):
@@ -103,9 +104,11 @@ class TestCaseAgent(PipelineStepAgent):
         f.close()
 
 
-    def load_knowledge_base(self):
+    def load_generator_knowledge_base(self):
         self.generate_llm_client.upload_files()
-        #self.verify_llm_client.upload_files()
+
+    def load_verifier_knowledge_base(self):
+        self.verify_llm_client.upload_files()
 
     def generate_content(self, prompt, response_schema=None):
         return self.generate_llm_client.generate_content(prompt, response_schema)
@@ -113,10 +116,13 @@ class TestCaseAgent(PipelineStepAgent):
     def verify_content(self, prompt, response_schema=None):
         return self.verify_llm_client.generate_content(prompt, response_schema)
     
-    def execute(self, start = 1, end = -1, gen_instruct = '', verify = False, tries = 3, wait = True):
+    def execute(self, start = 1, end = -1, gen_instruct = '', verify = True, tries = 2, wait = True):
         inCorrectScenarios = []
         if self.generate_model_config.provider == 'gemini':
-            self.load_knowledge_base()
+            self.load_generator_knowledge_base()
+
+        if verify and self.verify_model_config.provider == 'gemini':
+            self.load_verifier_knowledge_base()
 
         self.load_input_data()
         final_df = pd.DataFrame()
@@ -130,20 +136,20 @@ class TestCaseAgent(PipelineStepAgent):
         for record_num in range(start-1, (len(self.input_df) if end < 0 else min(end, len(self.input_df)))):
             scenario = self.input_df.iloc[record_num]
 
-            verifier_feedback, verify_response = '', None
+            verifier_feedback, current_output, verify_response = '', '', None
             self.generate_model_config.task = self.generate_model_config.task_template.format(scenario_id = str(scenario['scenario_id']),scenario=str(scenario['scenario_description']), 
-                                                                                              dimensions = str(scenario['scenario_dimension']),
+                                                                                              dimensions = str(scenario['scenario_dimension']), memberCode = str(scenario['member_code']),
                                                                                               general_instructions = gen_instruct, test_dimensions = self.dimensions)
             print(f"\n Generating Test Cases for Scenario {record_num+1}")
             for i in range(tries):
                 #Generation
-                prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task + '\n' + f'Verifier feedback: {verifier_feedback}'
+                prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task + '\n' + f'Verifier feedback: {verifier_feedback} , Previous output: {current_output}'
                 generated_response = self.generate_content(prompt, self.generate_model_config.output_format)
                 output_df = pd.DataFrame(generated_response['output'])
                 
                 #Verification                
-                self.verify_model_config.task = self.verify_model_config.task_template.format(given_steps = output_df['given_steps'], when_steps = output_df['when_steps'], then = output_df['then'],
-                                                                                              scenario_id = str(scenario['scenario_id']), scenario=str(scenario['scenario_description']), 
+                self.verify_model_config.task = self.verify_model_config.task_template.format(given_steps = output_df['given_steps'].to_json(), when_steps = output_df['when_steps'].to_json(), then = output_df['then'].to_json(),
+                                                                                              scenario_id = str(scenario['scenario_id']), scenario=str(scenario['scenario_description']), memberCode = str(scenario['member_code']),
                                                                                               dimensions = str(scenario['scenario_dimension']))    
                 prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task
                 if verify:
@@ -154,6 +160,7 @@ class TestCaseAgent(PipelineStepAgent):
                         break
                     else:
                         verifier_feedback = verify_response['correction']
+                        current_output = json.dumps({'given_steps': output_df['given_steps'].to_json(), 'when_steps': output_df['when_steps'].to_json(), 'then': output_df['then'].to_json()}, indent = 2)
 
             if not verify or (verify_response and verify_response['isCorrect']):
                 if final_df.empty:

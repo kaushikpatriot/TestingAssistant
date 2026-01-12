@@ -377,7 +377,7 @@ class TestOutputAgent(PipelineStepAgent):
     def verify_content(self, prompt, response_schema = None, session = 'new'):
         return self.verify_llm_client.generate_content(prompt, response_schema, session)
     
-    def execute(self, sheets, verify = False, tries = 3, startMarker = '##Expected Output - Start', endMarker = '##Expected Output - End', cleanup = True):
+    def execute(self, sheets, verify = False, tries = 2, startMarker = '##Expected Output - Start', endMarker = '##Expected Output - End', cleanup = True):
         if self.generate_model_config.provider == 'gemini':
             self.load_generator_knowledge_base()
 

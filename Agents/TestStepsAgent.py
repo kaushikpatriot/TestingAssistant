@@ -14,8 +14,8 @@ class AllocationDetails(BaseModel):
                                   Use the segment code available in static data such as CM, FNO etc
                                   E.g CM, FNO etc''')
   tmCode: str = Field(description="This is the trading member code")
-  cpCode: str = Field(description="This is the custodial participant code")
-  cliCode: str = Field(description="This is the client code")
+  cpCode: str = Field(description="This is the custodial participant code. Do not include any special characters. Use the pattern CP001, CP002 etc")
+  cliCode: str = Field(description="This is the client code. Do not include any special characters. Use the pattern UCC001, UCC002 etc")
   txn_type: str = Field(description = "This can have only 4 possible values. Allocate, De-allocate and Transfer In and Transfer Out")
   amt: float = Field(description="This is the amount of the transaction. *Allocation and Transfer In are a positive amounts, De-allocation and Transfer Out will be negative.*")
   cum_amt: float = Field(description='''This is the cumulative allocation outstanding after the transaction is performed.
@@ -129,6 +129,7 @@ class TestStepAgent(PipelineStepAgent):
                                 2. What you need to verify now is whether the test steps generated correspond to the steps 
                                     laid out in the given and when steps. 
                                 3. If the steps correspond to the given when steps, then the output is Correct. If not, it is incorrect
+                                4. **NOTE: For Allocation Event, the Collateral Type will always be marked as CASH. This can be ignored**
                                 ''',
                         task =  '',
                         output_format = TestStepVerification,
@@ -160,7 +161,7 @@ class TestStepAgent(PipelineStepAgent):
     def verify_content(self, prompt, response_schema=None):
         return self.verify_llm_client.generate_content(prompt, response_schema)
     
-    def execute(self, start=1, end=-1, verify = True, tries = 2, cleanup = True):
+    def execute(self, start=1, end=-1, verify = True, tries = 2, cleanup = False):
         if self.generate_model_config.provider == 'gemini':
             self.load_generator_knowledge_base()
 
@@ -194,7 +195,7 @@ class TestStepAgent(PipelineStepAgent):
                                                                                               memberCode = str(input_data['memberCode'])
                                                                                              )
             for i in range(tries):
-                prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task
+                prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task + f'\nVerifier feedback:{feedback}'
                 generated_response = self.generate_content(prompt, self.generate_model_config.output_format)
                 output_df = pd.DataFrame(generated_response['output'])
                 output_df_json = output_df.to_json()
@@ -207,11 +208,11 @@ class TestStepAgent(PipelineStepAgent):
                                                                                               then = str(input_data["then"]),
                                                                                               memberCode = str(input_data['memberCode']),
                                                                                               test_steps = str(output_df_json))
-                    prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task + f'\nVerifier feedback:{feedback}' #if feedback != '' else ''
+                    prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task  #if feedback != '' else ''
                     verify_response = self.verify_content(prompt, self.verify_model_config.output_format)
 
                     if verify_response['correctness']:
-                        print(verify_response)
+                        # print(verify_response)
                         break
                     else:
                         feedback = verify_response['correction']
