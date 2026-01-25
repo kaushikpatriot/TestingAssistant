@@ -17,8 +17,6 @@ def generateDimensions():
 
 def generateScenarios():
     print(f'Generating Test Scenarios \n')
-    # scenario_gen = TestScenarioGenerator()
-    # scenario_gen.generateScenarios()
     test_sc_agent = TestScenarioAgent("Cash Allocation")
     test_sc_agent.execute()
 

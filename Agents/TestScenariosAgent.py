@@ -1,75 +1,19 @@
-from Agents.Agent import PipelineStepAgent, ModelConfig, LLMClient
-from Helpers.KnowledgeBaseProvider import getKnowledgeBasePath
-from pydantic import BaseModel, Field
+from Agents.Agent import PipelineStepAgent, LLMClient
+from AgentConfig.config import ModelConfig
+from Helpers.KnowledgeBaseProvider import getKnowledgeBasePath, getConfigPath, getModule
 import pandas as pd
 import os
 from Helpers.OutputManager import CsvManager as csv
 import yaml
-
-
-class TestComboValue(BaseModel):
-    dimension: str = Field(description='Dimension applicable. Use consistent naming through out')
-    value: str = Field(description = 'Value applicable to the dimension. Use consistent naming through out')
-
-class TestComboSet(BaseModel):
-    scenario_id: str = Field(description = 'Unique identifier for the combination. The numbering follows SC-001, SC-002 pattern')
-    scenario_description: str = Field (description = 'Comprehensive description of the scenario using the dimensions provided.')
-    scenario_dimension: list[TestComboValue] = Field(description= 'The list of combination values of dimensions')
-    member_code: str = Field(description='member code to be used for this scenario')
-
-
-class TestComboList(BaseModel):
-    output: list[TestComboSet] = Field(description = 'Consists of all the Test Combination sets. ')
-
-class TestComboVerification(BaseModel):
-    overall_score: int = Field(description = 'Provides a score out of 100 in terms of correctness of the test combos')
+import importlib.util
 
 
 class TestScenarioAgent(PipelineStepAgent):
-    generate_model_config = ModelConfig(
-                        test_module = '',
-                        knowledge_base_path='',
-                        role = '''You are an expert test designer for financial application. You understand the nuances of requirements provided''',
-                        task_template='''
-                                You required to carefully understand the requirements and the Test dimensions provided here 
-                                {dimensions}
-                             and do the following
-                                1. Create an exhaustive list of scenarios from which test cases can be generated from the dimensions provided. **DO NOT** miss any valid combinations.
-                                2. Use only the dimensions provided. **DO NOT** use any other dimensions.
-                                3. **DO NOT GENERATE DUPLICATE COMBINATIONS**
-                                4. combine_strategy for each dimension means
-                                    a. cartesian - means every value has to be combined with every value from other dimensions to create an exhaustive list
-                                    b. coverage - means there should atleast one combination that covers the given value. It doesnt have to be combined to every value
-                                    c. independent - means these values form their own scenarios and do not combine with values of other dimensions
-                                5. List them in the format required
-                                ''',
-                        task =  '',
-                        output_format = TestComboList,
-                        provider = 'gemini',
-                        model = 'gemini-2.5-pro' #'qwen-coder:30b'#'gpt-oss:20b'
-                        )
-    
-    verify_model_config = ModelConfig(
-                        test_module = '',
-                        knowledge_base_path='',
-                        role = '''You are an expert test case verifier for financial application. You understand the nuances of requirements provided''',
-                        task_template='',
-                        task = '''
-                                You required to carefully understand the requirements, the Test dimensions provided and the Test combinations is attached.
-                                Test Dimensions are given below:
-                                {dimensions}
-                                Test Scenarios generated so far:
-                                {test_scenarios} 
-                                Verify the test scenarios carefully and do the following
-                                1. Provide the corrected scenarios where the scenario is incorrect
-                                2. Provide a list of scenarios that are missed out from the initial set
-                                '''  ,
-                        output_format = TestComboList,
-                        provider = 'gemini',
-                        model = 'gemini-2.5-pro'
-                        )
-
     def __init__(self, test_module):
+        file_path = os.path.join(getConfigPath(test_module=test_module), "TestScenarioConfig.py")
+        moduleObj = getModule("TestScenarioConfig", file_path)
+        self.generate_model_config = moduleObj.generate_model_config
+        self.verify_model_config = moduleObj.verify_model_config
         self.generate_model_config.test_module = test_module
         self.generate_model_config.knowledge_base_path = getKnowledgeBasePath(test_module)
         self.verify_model_config.test_module = test_module
@@ -121,7 +65,6 @@ class TestScenarioAgent(PipelineStepAgent):
             prompt = self.generate_model_config.role + '\n' + self.generate_model_config.task
             generated_response = self.generate_content(prompt, self.generate_model_config.output_format)
             response_df = pd.DataFrame(generated_response['output'])
-            # print(f'Number of Scenarios generated in step {step_num+1} is {len(response_df)}')
             if verify:
                 self.verify_model_config.task = self.verify_model_config.task_template.format(dimensions = str(self.dimensions), test_scenarios = str(generated_response['output']))
                 verify_prompt = self.verify_model_config.role + '\n' + self.verify_model_config.task
@@ -137,8 +80,5 @@ class TestScenarioAgent(PipelineStepAgent):
         
         scenarios_df = pd.concat([scenarios_df, verify_df], ignore_index=True)
         
-        # if len(response_df) < 50: #Maximum of 50 combinations being generated at a time
-        #     break
-
         csv.writeDfToCsv(scenarios_df,os.getenv('TEST_SCENARIOS_FILE'))
         #print(generated_response)

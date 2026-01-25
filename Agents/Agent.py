@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Type
 import pandas as pd
 import os
+from AgentConfig.config import ModelConfig
 
 
 class LLMClient:
@@ -29,29 +30,12 @@ class LLMClient:
         self.llm_connector.cleanup_files()
 
 
-class ModelConfig(BaseModel):
-    test_module: str
-    knowledge_base_path: str
-    role: str
-    task_template: str
-    task: str
-    output_format: Type[BaseModel]
-    provider: str
-    model: str
-
-class TextResponse(BaseModel):
-    text: str
-    proceed: bool
-
 class PipelineStepAgent(ABC):
     '''
     This is a template Class for defining an Agent to perform a given task and produce an output
     '''
-    generate_model_config:ModelConfig
-    verify_model_config:ModelConfig
-
     @abstractmethod
-    def __init__(self, test_module):
+    def __init__(self, test_module, generate_model_config:ModelConfig, verify_model_config:ModelConfig):
         pass
 
     @abstractmethod
